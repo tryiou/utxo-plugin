@@ -20,7 +20,10 @@ from electrumx.lib.hash import double_sha256, hash_to_hex_str, HASHX_LEN
 from server.daemon import LBCDaemon, SyscoinDaemon
 from server.session import (ElectrumX, BitcoinSegwitElectrumX, DashElectrumX,
                             SmartCashElectrumX, AuxPoWElectrumX, SyscoinElectrumX, LBRYElectrumX)
-from electrumx.lib.coins import *
+
+from electrumx.lib.coins import (Litecoin, BitcoinSegwit, Bitcore, Dash, DigiByte,
+                                 Syscoin, Bitbay, Dogecoin, Ravencoin,
+                                 Polis, Pivx, Trezarcoin, BitcoinCash)
 
 class Coin(CoinBase):
     DESERIALIZER = lib_tx.Deserializer
