@@ -208,13 +208,10 @@ class Litecoin(Coin):
     NAME = "Litecoin"
     SHORTNAME = "LTC"
     NET = "mainnet"
-
-    # DAEMON = daemon.LegacyRPCDaemon
-
     XPUB_VERBYTES = bytes.fromhex("0488b21e")
     XPRV_VERBYTES = bytes.fromhex("0488ade4")
     P2PKH_VERBYTE = bytes.fromhex("30")
-    P2SH_VERBYTES = [bytes.fromhex("32"), bytes.fromhex("05")]
+    P2SH_VERBYTES = (bytes.fromhex("32"), bytes.fromhex("05"))
     WIF_BYTE = bytes.fromhex("b0")
     GENESIS_HASH = ('12a765e31ffd4059bada1e25190f6e98'
                     'c99d9714d334efa41a195a7e7e04bfe2')
@@ -223,6 +220,7 @@ class Litecoin(Coin):
     TX_COUNT_HEIGHT = 1105256
     TX_PER_BLOCK = 10
     RPC_PORT = 9332
+    REORG_LIMIT = 800
 
 
 class DigiByte(Coin):
