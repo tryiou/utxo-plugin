@@ -10,10 +10,11 @@ from electrumx import Env
 from electrumx.lib.util import CompactFormatter, make_logger
 from server.db import Database
 from server.controller import Controller
-from server.utxoplugin_coins import (Coin, Blocknet, BlocknetTestnet,
-                                     BitcoinSegwit, Bitcore, Litecoin, Dash, DigiByte,
-                                     Syscoin, Phore, Alqo, Bitbay, Dogecoin, Ravencoin,
-                                     Polis, Pivx, Trezarcoin, BitcoinCash, Stakenet, LBC)
+#from electrumx.server.controller import Controller
+from electrumx.lib.coins import (Coin, BitcoinSegwit, Litecoin, Dash, Bitcore, DigiByte, Syscoin, Dogecoin, Pivx)
+from server.utxoplugin_coins import (Blocknet, BlocknetTestnet, Phore, Alqo, Bitbay, Ravencoin,
+                                     Polis, Trezarcoin, BitcoinCash, Stakenet)
+#, LBC)
 
 coin_map = {
     "BLOCK": Blocknet,
@@ -33,8 +34,9 @@ coin_map = {
     "RVN": Ravencoin,
     "PIVX": Pivx,
     "TZC": Trezarcoin,
-    "XSN": Stakenet,
-    "LBC": LBC,
+    "XSN": Stakenet
+    #,
+    #"LBC": LBC,
 }
 
 coin = environ.get('PLUGIN_COIN')
