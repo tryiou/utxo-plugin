@@ -11,9 +11,9 @@ from electrumx.lib.util import CompactFormatter, make_logger
 from server.db import Database
 from server.controller import Controller
 #from electrumx.server.controller import Controller
-from electrumx.lib.coins import (Coin, BitcoinSegwit, Litecoin, Dash, Bitcore, DigiByte, Syscoin, Dogecoin, Pivx)
-from server.utxoplugin_coins import (Blocknet, BlocknetTestnet, Phore, Alqo, Bitbay, Ravencoin,
-                                     Polis, Trezarcoin, BitcoinCash, Stakenet)
+#from electrumx.lib.coins import (Coin, BitcoinSegwit, Litecoin, Dash, Bitcore, DigiByte, Syscoin, Dogecoin, Pivx)
+from server.utxoplugin_coins import (Coin, Blocknet, BlocknetTestnet, Phore, Alqo, Bitbay, Ravencoin,
+                                     Polis, Trezarcoin, BitcoinCash, Stakenet, BitcoinSegwit, Litecoin, Dash, Bitcore, DigiByte, Syscoin, Dogecoin, Pivx)
 #, LBC)
 
 coin_map = {
