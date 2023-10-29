@@ -10,33 +10,32 @@ from electrumx import Env
 from electrumx.lib.util import CompactFormatter, make_logger
 from server.db import Database
 from server.controller import Controller
-from server.utxoplugin_coins import (Coin, Blocknet, BlocknetTestnet,
-                                     BitcoinSegwit, Bitcore, Litecoin, Dash, DigiByte,
-                                     Syscoin, Phore, Alqo, Bitbay, Dogecoin, Ravencoin,
-                                     Polis, Pivx, Trezarcoin, BitcoinCash, Stakenet)
-#, LBC)
+from server.utxoplugin_coins import (Coin, Blocknet, BlocknetTestnet, BitcoinSegwit, Litecoin, Dash, Syscoin,
+                                     Dogecoin, Pivx)
+
+# ,LBC, Stakenet, BitcoinCash, Trezarcoin, Polis, Ravencoin, Bitbay, Alqo, Phore, DigiByte, Bitcore, )
+
 
 coin_map = {
     "BLOCK": Blocknet,
     "TBLOCK": BlocknetTestnet,
     "BTC": BitcoinSegwit,
-    "BCH": BitcoinCash,
-    "BTX": Bitcore,
     "SYS": Syscoin,
     "LTC": Litecoin,
     "DASH": Dash,
-    "DGB": DigiByte,
     "DOGE": Dogecoin,
-    "POLIS": Polis,
-    "PHR": Phore,
-    "XLQ": Alqo,
-    "BAY": Bitbay,
-    "RVN": Ravencoin,
-    "PIVX": Pivx,
-    "TZC": Trezarcoin,
-    "XSN": Stakenet
-    # ,
-    # "LBC": LBC,
+    "PIVX": Pivx
+    # , "DGB": DigiByte,
+    # "BCH": BitcoinCash,
+    # "BTX": Bitcore,
+    # "POLIS": Polis,
+    # "PHR": Phore,
+    # "XLQ": Alqo,
+    # "BAY": Bitbay,
+    # "RVN": Ravencoin,
+    # "TZC": Trezarcoin,
+    # "XSN": Stakenet,
+    # "LBC": LBC
 }
 
 coin = environ.get('PLUGIN_COIN')
@@ -99,7 +98,7 @@ def delete_lock_files():
 def main(db_compacted=False):
     network = environ.get('NETWORK')
     skip_compacting = environ.get('SKIP_COMPACT', 'false')
-    
+
     print('[utxoplugin] Data-Directory: {}'.format(db_dir))
 
     delete_lock_files()
