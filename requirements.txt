@@ -1,6 +1,6 @@
 git+https://github.com/spesmilo/electrumx.git@master#egg=e-x
 #x11_hash==1.4
-#quark_hash==1.0
+quark_hash==1.0
 uvloop==0.17.0
 #python-rocksdb==0.7.0
 -e git+https://github.com/twmht/python-rocksdb.git@445ebbbfdcd41dd3695304e23058fd9ed5178adf#egg=python-rocksdb
