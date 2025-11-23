@@ -1,1 +1,6 @@
 .DS_Store
+venv
+.idea*
+.aider*
+utxo_plugin/
+.python-version

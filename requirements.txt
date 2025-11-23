@@ -1,4 +1,4 @@
-git+https://github.com/spesmilo/electrumx.git@master#egg=e-x
+git+https://github.com/blocknetdx/electrumx.git@master#egg=e-x
 x11_hash==1.4
 dash_hash==1.4
 quark_hash==1.0
