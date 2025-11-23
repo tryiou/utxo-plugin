@@ -1,6 +1,5 @@
 import struct
 import electrumx.lib.tx as lib_tx
-import electrumx.lib.tx_dash as lib_tx_dash
 #import lib.tx as lib_tx
 #import lib.tx_dash as lib_tx_dash
 #import lib.coins as BlockProc
@@ -14,9 +13,8 @@ from electrumx.lib.script import OpCodes, _match_ops, ScriptPubKey
 from electrumx.lib.coins import AuxPowMixin, ScryptMixin, CoinError, Coin as CoinBase
 from electrumx.lib.hash import double_sha256, hash_to_hex_str, HASHX_LEN
 
-from server.daemon import SyscoinDaemon
-from server.session import (ElectrumX, BitcoinSegwitElectrumX, DashElectrumX,
-                            SmartCashElectrumX, AuxPoWElectrumX, SyscoinElectrumX)
+from server.session import (ElectrumX, BitcoinSegwitElectrumX,
+                            AuxPoWElectrumX)
 class Coin(CoinBase):
     DESERIALIZER = lib_tx.Deserializer
     DAEMON = daemon.Daemon
@@ -126,8 +124,8 @@ class Syscoin(AuxPowHelper, Coin):
     # sync, while 10 MB worked fine.
     DEFAULT_MAX_SEND = 10000000
 
-    DAEMON = SyscoinDaemon
-    SESSIONCLS = SyscoinElectrumX
+    DAEMON = daemon.Daemon
+    SESSIONCLS = ElectrumX
     DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
 
 
@@ -275,9 +273,9 @@ class Dash(Coin):
     TX_PER_BLOCK = 4
     RPC_PORT = 9998
     PEERS = []
-    SESSIONCLS = DashElectrumX
-    DAEMON = daemon.DashDaemon
-    DESERIALIZER = lib_tx_dash.DeserializerDash
+    SESSIONCLS = ElectrumX
+    DAEMON = daemon.Daemon
+    DESERIALIZER = lib_tx.Deserializer
 
     @classmethod
     def header_hash(cls, header):
@@ -304,9 +302,9 @@ class Polis(Coin):
     PEERS = [
         'electrum.polispay.com'
     ]
-    SESSIONCLS = DashElectrumX
-    DAEMON = daemon.DashDaemon
-    DESERIALIZER = lib_tx_dash.DeserializerDash
+    SESSIONCLS = ElectrumX
+    DAEMON = daemon.Daemon
+    DESERIALIZER = lib_tx.Deserializer
 
     @classmethod
     def header_hash(cls, header):
@@ -594,9 +592,9 @@ class Stakenet(Coin):
     TX_PER_BLOCK = 4
     RPC_PORT = 62583
     PEERS = []
-    SESSIONCLS = DashElectrumX
-    DAEMON = daemon.DashDaemon
-    DESERIALIZER = lib_tx.DeserializerSegWit
+    SESSIONCLS = ElectrumX
+    DAEMON = daemon.Daemon
+    DESERIALIZER = lib_tx.Deserializer
 
     @classmethod
     def header_hash(cls, header):
