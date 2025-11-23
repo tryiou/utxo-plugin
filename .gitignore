@@ -4,3 +4,4 @@ venv
 .aider*
 utxo_plugin/
 .python-version
+*.pyc

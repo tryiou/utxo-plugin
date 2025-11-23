@@ -11,6 +11,5 @@ python-rapidjson==1.20
 kawpow==0.9.4.4
 msgpack~=1.1.0
 asyncio~=3.4.3
-lbryschema==0.0.16
 beaker==1.13.0
 pylru~=1.2.1
