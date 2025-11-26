@@ -149,7 +149,7 @@ class CustomElectrumX(BaseElectrumX):
         def address_to_hashX(address):
             return self.coin.address_to_hashX(address)
         
-        async def session_mgr_wrapper(hash_x):
+        async def limited_history_wrapper(hash_x):
             return await self.db.limited_history(hash_x, limit=100)
         
         def bump_cost_wrapper(cost):
@@ -161,7 +161,7 @@ class CustomElectrumX(BaseElectrumX):
         return await GetAddressHistory.get_history(
             addresses,
             address_to_hashX,
-            session_mgr_wrapper,
+            limited_history_wrapper,
             bump_cost_wrapper,
             transaction_get_wrapper,
             self.logger

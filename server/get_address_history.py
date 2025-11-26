@@ -13,7 +13,7 @@ async def get_history(addresses, address_to_hashX, session_mgr, bump_cost, trans
     Args:
         addresses: List of addresses or single address string
         address_to_hashX: Function to convert address to hashX
-        session_mgr: Session manager with limited_history method
+        session_mgr: Function that retrieves limited history for a hashX
         bump_cost: Function to bump cost
         transaction_get: Function to get transaction data
         logger: Logger object
@@ -35,7 +35,14 @@ async def get_history(addresses, address_to_hashX, session_mgr, bump_cost, trans
             if hash_x is None:
                 continue
 
-            history, cost = await session_mgr.limited_history(hash_x)
+            # history, cost = await session_mgr(hash_x)
+            result = await session_mgr(hash_x)
+            if isinstance(result, tuple):
+                history, cost = result
+            else:
+                history = result
+                cost = 1.0  # Default cost when not provided
+                
             bump_cost(cost)
             logger.info(f'History retrieved for address: {address}, cost: {cost}')
 
