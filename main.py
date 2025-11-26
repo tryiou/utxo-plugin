@@ -156,7 +156,7 @@ def main(db_compacted=False):
     log_fmt = env.default('LOG_FORMAT', '%(levelname)s:%(name)s:%(message)s')
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(CompactFormatter(log_fmt))
-    make_logger('electrumx', handler=handler, level=logging.DEBUG)
+    make_logger('electrumx', handler=handler, level=logging.INFO)
 
     logging.info('ElectrumX server starting')
 

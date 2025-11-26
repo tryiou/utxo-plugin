@@ -28,7 +28,7 @@ async def get_history(addresses, address_to_hashX, session_mgr, bump_cost, trans
     
     for address in addr_lookup:
         address = str(address)
-        logger.info(f'Processing address: {address}')
+        logger.debug(f'Processing address: {address}')
 
         try:
             hash_x = _convert_address_to_hashx(address, address_to_hashX, logger)
@@ -44,7 +44,7 @@ async def get_history(addresses, address_to_hashX, session_mgr, bump_cost, trans
                 cost = 1.0  # Default cost when not provided
                 
             bump_cost(cost)
-            logger.info(f'History retrieved for address: {address}, cost: {cost}')
+            logger.debug(f'History retrieved for address: {address}, cost: {cost}')
 
             await _process_transaction_history(
                 history, processed_txs, addr_lookup, transaction_get, 
@@ -52,7 +52,7 @@ async def get_history(addresses, address_to_hashX, session_mgr, bump_cost, trans
             )
 
         except Exception as e:
-            logger.info(f'Exception while retrieving history for address {address}: {e}')
+            logger.warning(f'Exception while retrieving history for address {address}: {e}')
             import traceback
             traceback.print_exc()
 
@@ -71,10 +71,10 @@ def _convert_address_to_hashx(address, address_to_hashX, logger):
     """Try to convert address to hashX, return None on failure."""
     try:
         hash_x = address_to_hashX(address)
-        logger.info(f'Address converted to hashX: {hash_x}')
+        logger.debug(f'Address converted to hashX: {hash_x}')
         return hash_x
     except Exception as e:
-        logger.info(f'Exception while converting address: {e}')
+        logger.warning(f'Exception while converting address: {e}')
         return None
 
 
@@ -82,19 +82,19 @@ async def _process_transaction_history(history, processed_txs, addr_lookup, tran
     """Process all transactions in the history."""
     for tx_hash, height in history:
         if tx_hash in processed_txs:
-            logger.info(f'Skipping transaction, already processed: {tx_hash}')
+            logger.debug(f'Skipping transaction, already processed: {tx_hash}')
             continue
         
-        logger.info(f'Processing transaction: {tx_hash}')
+        logger.debug(f'Processing transaction: {tx_hash}')
         tx = await transaction_get(hash_to_hex_str(tx_hash), verbose=True)
         if not tx:
-            logger.info(f'Transaction not found: {tx_hash}')
+            logger.debug(f'Transaction not found: {tx_hash}')
             continue
         processed_txs.add(tx_hash)
 
         spends = await _process_single_transaction(tx, addr_lookup, spent_ids, transaction_get, logger)
         spent.extend(spends)
-        logger.info(f'Spends recorded for transaction: {spends}')
+        logger.debug(f'Spends recorded for transaction: {spends}')
 
 
 async def _process_single_transaction(tx, addr_lookup, spent_ids, transaction_get, logger):
@@ -103,10 +103,10 @@ async def _process_single_transaction(tx, addr_lookup, spent_ids, transaction_ge
         tx, addr_lookup, transaction_get, logger
     )
     
-    logger.info(f'Transaction analysis for {tx["txid"]}:')
-    logger.info(f'  from_addresses: {from_addresses}')
-    logger.info(f'  my_total_send_amount: {my_total_send_amount}')
-    logger.info(f'  total_send_amount: {total_send_amount}')
+    logger.debug(f'Transaction analysis for {tx["txid"]}:')
+    logger.debug(f'  from_addresses: {from_addresses}')
+    logger.debug(f'  my_total_send_amount: {my_total_send_amount}')
+    logger.debug(f'  total_send_amount: {total_send_amount}')
     
     my_total_send_amount_running = my_total_send_amount
     is_sending_coin = my_total_send_amount > 0
@@ -148,10 +148,10 @@ async def _process_single_transaction(tx, addr_lookup, spent_ids, transaction_ge
         if total_output_value > total_input_value:
             is_staking_reward = True
             fees = 0.0  # No fees for staking rewards
-            logger.info(f'STAKING REWARD detected for {tx["txid"]}: input={total_input_value}, output={total_output_value}')
+            logger.debug(f'STAKING REWARD detected for {tx["txid"]}: input={total_input_value}, output={total_output_value}')
         else:
             fees = -(total_input_value - total_output_value)  # Make fees negative as expected by tests
-            logger.info(f'Fee calculation for {tx["txid"]}: input={total_input_value}, output={total_output_value}, fee={fees}')
+            logger.debug(f'Fee calculation for {tx["txid"]}: input={total_input_value}, output={total_output_value}, fee={fees}')
     
     # Assign fees to the largest send transaction (only if not a staking reward)
     if not is_staking_reward:
@@ -178,7 +178,7 @@ async def _analyze_transaction_inputs(tx, addr_lookup, transaction_get, logger):
     for item in tx['vin']:
         prev_tx = await transaction_get(item['txid'], verbose=True)
         if not prev_tx:
-            logger.info(f'Previous transaction not found: {item["txid"]}')
+            logger.debug(f'Previous transaction not found: {item["txid"]}')
             continue
 
         prev_out_amount = prev_tx['vout'][item['vout']]['value']
@@ -244,7 +244,7 @@ def _process_outputs_to_other_addresses(tx, addr_lookup, my_total_send_amount_ru
             if spend:
                 spent_ids.add(txid_n)
                 spends.append(spend)
-                logger.info(f'Spent coin recorded: {spend}')
+                logger.debug(f'Spent coin recorded: {spend}')
     
     return my_total_send_amount_running, total_output_amount
 
@@ -270,7 +270,7 @@ def _process_outputs_to_own_addresses(tx, addr_lookup, my_total_send_amount_runn
         if spend:
             spent_ids.add(txid_n)
             spends.append(spend)
-            logger.info(f'Received coin recorded: {spend}')
+            logger.debug(f'Received coin recorded: {spend}')
 
         # Record sent coin if applicable
         if my_total_send_amount_running > sys.float_info.epsilon:
@@ -285,7 +285,7 @@ def _process_outputs_to_own_addresses(tx, addr_lookup, my_total_send_amount_runn
                 if spend:
                     spent_ids.add(txid_n)
                     spends.append(spend)
-                    logger.info(f'Spent coin recorded: {spend}')
+                    logger.debug(f'Spent coin recorded: {spend}')
 
                     if tracking['biggest_sent_amount_my_address'] < amount:
                         tracking['biggest_sent_amount_my_address'] = amount
@@ -350,13 +350,13 @@ def _assign_fees_to_largest_send(is_sending_coin, fees, spends, tracking, logger
             biggest_amount = tracking['biggest_sent_amount_my_address']
             biggest_sent_address = tracking['biggest_sent_address_my_address']
         
-        logger.info(f'Fee assignment: is_sending_coin={is_sending_coin}, fees={fees}, biggest_sent_address={biggest_sent_address}')
+        logger.debug(f'Fee assignment: is_sending_coin={is_sending_coin}, fees={fees}, biggest_sent_address={biggest_sent_address}')
         
         if biggest_sent_address:
             for spend in spends:
                 if spend['address'] == biggest_sent_address and spend['category'] == 'send':
                     spend['fee'] = truncate(fees, 10)
-                    logger.info(f'Assigned fee: {spend}')
+                    logger.debug(f'Assigned fee: {spend}')
                     break
 
 
