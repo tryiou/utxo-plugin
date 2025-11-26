@@ -4,8 +4,7 @@ import pylru
 from electrumx.lib.hash import sha256, hash_to_hex_str, hex_str_to_hash
 from electrumx.server.session import ElectrumX as BaseElectrumX, non_negative_integer
 
-# Import the address history processor
-import get_address_history as GetAddressHistory
+from server import get_address_history as GetAddressHistory
 
 # Error constants
 BAD_REQUEST = 1
