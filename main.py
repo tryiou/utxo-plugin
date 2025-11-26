@@ -8,8 +8,8 @@ from os import environ, getcwd, mkdir, remove
 from os.path import isdir, exists
 from electrumx import Env
 from electrumx.lib.util import CompactFormatter, make_logger
-from server.db import Database
-from server.controller import Controller
+from electrumx.server.db import DB
+from electrumx.server.controller import Controller
 from server.utxoplugin_coins import (Coin, Blocknet, BlocknetTestnet,
                                      BitcoinSegwit, Bitcore, Litecoin, Dash, DigiByte,
                                      Syscoin, Phore, Alqo, Bitbay, Dogecoin, Ravencoin,
@@ -58,7 +58,7 @@ async def compact_history(env):
         raise RuntimeError('Python >= 3.7 is required to run ElectrumX')
 
     environ['DAEMON_URL'] = ''  # Avoid Env erroring out
-    db = Database(env)
+    db = DB(env)
     await db.open_for_compacting()
 
     if db.first_sync or db.first_sync is None:

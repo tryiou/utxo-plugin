@@ -3,8 +3,8 @@ import json
 import unittest
 from electrumx.lib.hash import sha256, hash_to_hex_str
 
-from server.session import get_history
 
+from server.get_address_history import get_history
 
 def make_vin(txid, n):
     return {

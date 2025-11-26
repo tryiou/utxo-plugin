@@ -1,13 +1,9 @@
 import codecs
-import datetime
 import sys
 import time
 import pylru
 import electrumx
 import electrumx.lib.util as util
-from binascii import unhexlify, hexlify
-from beaker.cache import CacheManager
-from beaker.util import parse_cache_config_options
 from aiorpcx import ReplyAndDisconnect, RPCError
 from electrumx.lib.hash import sha256, hash_to_hex_str, hex_str_to_hash
 from electrumx.server.daemon import DaemonError
@@ -34,7 +30,7 @@ class ElectrumX(SessionBase):
         self.hashX_subs = {}
         self.sv_seen = False
         self.mempool_statuses = {}
-        self.set_request_handlers(self.PROTOCOL_MIN)
+        self.set_request_handlers(self.PROTOCOL_MAX)
         self.is_peer = False
         self.cost = 5.0  # Connection cost
         self.cached_gettxoutsetinfo = None
@@ -1196,10 +1192,6 @@ class LocalRPC(SessionBase):
         return 'RPC'
 
 
-
-
-
-
 class AuxPoWElectrumX(ElectrumX):
     async def block_header(self, height, cp_height=0):
         result = await super().block_header(height, cp_height)
@@ -1213,65 +1205,41 @@ class AuxPoWElectrumX(ElectrumX):
             return result
 
         # Covered by a checkpoint; truncate AuxPoW data
-        result['header'] = self.truncate_auxpow(result['header'], height)
+        result['header'] = self.truncate_auxpow_single(result['header'])
         return result
 
     async def block_headers(self, start_height, count, cp_height=0):
-        result = await super().block_headers(start_height, count, cp_height)
-
         # Older protocol versions don't truncate AuxPoW
         if self.protocol_tuple < (1, 4, 1):
-            return result
+            return await super().block_headers(start_height, count, cp_height)
 
         # Not covered by a checkpoint; return full AuxPoW data
         if cp_height == 0:
-            return result
+            return await super().block_headers(start_height, count, cp_height)
+
+        result = await super().block_headers_array(start_height, count, cp_height)
 
         # Covered by a checkpoint; truncate AuxPoW data
-        result['hex'] = self.truncate_auxpow(result['hex'], start_height)
+        result['headers'] = self.truncate_auxpow_headers(result['headers'])
+
+        # Return headers in array form
+        if self.protocol_tuple >= (1, 6):
+            return result
+
+        # Return headers in concatenated form
+        result['hex'] = ''.join(result['headers'])
+        del result['headers']
         return result
 
-    def truncate_auxpow(self, headers_full_hex, start_height):
-        height = start_height
-        headers_full = util.hex_to_bytes(headers_full_hex)
-        cursor = 0
-        headers = bytearray()
+    def truncate_auxpow_headers(self, headers):
+        result = []
+        for header in headers:
+            result.append(self.truncate_auxpow_single(header))
+        return result
 
-        while cursor < len(headers_full):
-            headers.extend(headers_full[cursor:cursor + self.coin.TRUNCATED_HEADER_SIZE])
-            cursor += self.db.dynamic_header_len(height)
-            height += 1
+    def truncate_auxpow_single(self, header: str):
+        # 2 hex chars per byte
+        return header[:2*self.coin.TRUNCATED_HEADER_SIZE]
 
-        return headers.hex()
-
-
-class BitcoinSegwitElectrumX(ElectrumX):
-
-    async def maybe_attempt_to_crash_old_client(self, proto_ver):
-        client_ver = util.protocol_tuple(self.client)
-        is_old_protocol = proto_ver is None or proto_ver <= (1, 2)
-        is_old_client = client_ver != (0,) and client_ver < (3, 2, 4)
-        if is_old_protocol and is_old_client:
-            self.logger.info(f'attempting to crash old client with version {self.client}')
-            # this can crash electrum client 2.6 <= v < 3.1.2
-            await self.send_notification('blockchain.relayfee', ())
-            # this can crash electrum client (v < 2.8.2) UNION (3.0.0 <= v < 3.3.0)
-            await self.send_notification('blockchain.estimatefee', ())
-
-
-
-
-def setup_caching(data_dir):
-    cache_opts = {
-        'cache.type': 'dbm',
-        'cache.data_dir': data_dir,
-        'cache.lock_dir': data_dir,
-        'cache.regions': 'short_term, long_term',
-        'cache.short_term.type': 'dbm',
-    }
-
-    cache_manager = CacheManager(**parse_cache_config_options(cache_opts))
-    short_term_cache = cache_manager.get_cache('short_term', expire=240)
-    return short_term_cache
 
 
