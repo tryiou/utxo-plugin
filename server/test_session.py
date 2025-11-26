@@ -93,7 +93,12 @@ def session_mgr(address_to_hash_x, p_tx_lookup):
                     add_r(vout)
 
         return list(r), 0
-    return type('obj', (object,), {'limited_history': limited_history})
+    
+    # Return a callable that wraps the limited_history function
+    async def session_callable(hash_x):
+        return await limited_history(hash_x)
+    
+    return session_callable
 
 
 def bump_cost(cost):
