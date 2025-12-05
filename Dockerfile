@@ -1,4 +1,4 @@
-FROM python:3.9-slim-bullseye
+FROM python:3.10-slim-bullseye
 
 # Set working directory first
 WORKDIR /app/plugins
@@ -26,12 +26,14 @@ RUN apt-get update \
         zlib1g-dev \
         liblzma-dev \
         git \
-    && pip install --no-cache-dir -r requirements.txt \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
     && find /usr/share/man -type f -delete \
     && find /usr/share/doc -type f -delete
+
+# Install Python dependencies with retry mechanism
+RUN pip install --no-cache-dir --retries 5 --timeout 60 -r requirements.txt
 
 # Copy application code after dependencies
 COPY . .
