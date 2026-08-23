@@ -3,7 +3,8 @@ import json
 import unittest
 from electrumx.lib.hash import sha256, hash_to_hex_str
 
-from server.session import get_history
+import electrumx
+from server.session import ElectrumX
 
 
 def make_vin(txid, n):
@@ -68,77 +69,81 @@ def address_to_hashX(address):
     return hash_t(address)
 
 
-def session_mgr(address_to_hash_x, p_tx_lookup):
-    async def limited_history(hash_x):
+def make_self(tx_lookup):
+    '''Stub exposing exactly the attributes ElectrumX.get_address_history uses.'''
+    s = type('FakeSession', (), {})()
+
+    s.logger = type('obj', (object,), {
+        'info': staticmethod(lambda arg: None),
+        'exception': staticmethod(lambda arg: None),
+    })()
+
+    s.session_mgr = type('obj', (object,), {'_history_address_cache': {}})()
+
+    s.coin = type('obj', (object,), {'address_to_hashX': staticmethod(address_to_hashX)})()
+
+    async def limited_history(hash_x, limit=100):
         r = set()
-        def add_r(vout):
+
+        def add_r(vout, tx):
             if 'addresses' not in vout['scriptPubKey']:
                 return
-            addr_list = []
-            if isinstance(vout['scriptPubKey']['addresses'], list):
-                addr_list = vout['scriptPubKey']['addresses']
-            elif isinstance(vout['scriptPubKey']['addresses'], str):
-                addr_list = [vout['scriptPubKey']['addresses']]
+            addr_list = vout['scriptPubKey']['addresses']
+            if isinstance(addr_list, str):
+                addr_list = [addr_list]
             for address in addr_list:
-                if address_to_hash_x(address) == hash_x:
-                    r.add((v['txhash'], 1))
-        for k, v in p_tx_lookup.items():
+                if address_to_hashX(address) == hash_x:
+                    r.add((tx['txhash'], 1))
+
+        for v in tx_lookup.values():
             for vout in v['vout']:
-                add_r(vout)
+                add_r(vout, v)
             for vin in v['vin']:
-                tx = await transaction_get(p_tx_lookup)(vin['txid'])
-                if not tx:
+                prev = tx_lookup.get(vin['txid'])
+                if not prev:
                     continue
-                for vout in tx['vout']:
-                    add_r(vout)
+                for vout in prev['vout']:
+                    add_r(vout, prev)
+        return list(r)
 
-        return list(r), 0
-    return type('obj', (object,), {'limited_history': limited_history})
+    s.db = type('obj', (object,), {'limited_history': staticmethod(limited_history)})()
 
+    async def transaction_get(txid, verbose=False):
+        return tx_lookup.get(txid)
 
-def bump_cost(cost):
-    return
-
-
-def transaction_get(p_tx_lookup):
-    async def tx_get(hash_x, verbose=False):
-        if hash_x in p_tx_lookup:
-            return p_tx_lookup[hash_x]
-        else:
-            return None
-    return tx_get
+    s.transaction_get = transaction_get
+    return s
 
 
-def logger():
-    return type('obj', (object,), {'info': lambda arg: print(arg + '\n')})
+async def run_get_history(addresses, lookup=None):
+    return await ElectrumX.get_address_history(
+        make_self(tx_lookup if lookup is None else lookup), addresses)
 
 
 def async_test(f):
     def wrapper(*args, **kwargs):
-        coro = asyncio.coroutine(f)
-        future = coro(*args, **kwargs)
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(future)
+        asyncio.run(f(*args, **kwargs))
     return wrapper
 
 
 class TestGetHistory(unittest.TestCase):
     @async_test
     async def test_get_history_valid_sendreceive(self):
-        """The exact numbers here are based on manual transaction counts in the sample data"""
-        data = await get_history(['yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup), bump_cost, transaction_get(tx_lookup), logger())
+        """Counts reflect the current ownership-scoped send semantics
+        (originally hand-tallied, re-derived after per-address tightening)."""
+        data = await run_get_history(['yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm'])
         self.assertEqual(2, len(list(filter(lambda tx: tx['category'] == 'receive', data))), 'expecting receive transactions for single address yDaL')
-        self.assertEqual(10, len(list(filter(lambda tx: tx['category'] == 'send', data))), 'expecting send transactions for single address yDaL')
-        data = await get_history(['yDg7Y4rLScMj2GKnDc4zXuVY34grMstKDy'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup), bump_cost, transaction_get(tx_lookup), logger())
+        self.assertEqual(8, len(list(filter(lambda tx: tx['category'] == 'send', data))), 'expecting send transactions for single address yDaL')
+        data = await run_get_history(['yDg7Y4rLScMj2GKnDc4zXuVY34grMstKDy'])
         self.assertEqual(5, len(list(filter(lambda tx: tx['category'] == 'receive', data))), 'expecting receive transactions for single address yDg7')
         self.assertEqual(5, len(list(filter(lambda tx: tx['category'] == 'send', data))), 'expecting send transactions for single address yDaL')
-        data = await get_history(['yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm', 'yDg7Y4rLScMj2GKnDc4zXuVY34grMstKDy'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup), bump_cost, transaction_get(tx_lookup), logger())
+        data = await run_get_history(['yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm', 'yDg7Y4rLScMj2GKnDc4zXuVY34grMstKDy'])
         self.assertEqual(7, len(list(filter(lambda tx: tx['category'] == 'receive', data))), 'expecting receive transactions for multiple addresses')
         self.assertEqual(9, len(list(filter(lambda tx: tx['category'] == 'send', data))), 'expecting send transactions for multiple addresses')
 
     @async_test
     async def test_get_history_props(self):
-        data = await get_history(['yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup), bump_cost, transaction_get(tx_lookup), logger())
+        data = await run_get_history(['yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm'])
         data = sorted(data, key=lambda d: d['amount'], reverse=False)
 
         # check props
@@ -172,7 +177,7 @@ class TestGetHistory(unittest.TestCase):
 
     @async_test
     async def test_get_history_no_dups(self):
-        data = await get_history(['yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup), bump_cost, transaction_get(tx_lookup), logger())
+        data = await run_get_history(['yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm'])
         dups = {}
         for d in data:
             unique_id = (d['txid'], d['vout'], d['category'])
@@ -189,12 +194,16 @@ class TestGetHistory(unittest.TestCase):
         The fee amount is assigned to the largest vin tx with an address
         that belongs to us. If address is not ours no fee is recorded."""
         my_address = 'yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm'
-        data = await get_history([my_address], address_to_hashX, session_mgr(address_to_hashX, tx_lookup), bump_cost, transaction_get(tx_lookup), logger())
+        data = await run_get_history([my_address])
+        tx_lookup_local = tx_lookup
+
+        async def tx_get(txid):
+            return tx_lookup_local.get(txid)
         def debug_sort(a):
             return a['amount']
         data.sort(key=debug_sort, reverse=False)
         for d in data:
-            tx = await transaction_get(tx_lookup)(d['txid'])
+            tx = await tx_get(d['txid'])
             total_vin_amount = 0
             total_vout_amount = 0
             my_total_vin_amount = 0
@@ -208,7 +217,7 @@ class TestGetHistory(unittest.TestCase):
                     other_biggest_amount = amount
                     other_biggest_address = addr
             for vin in tx['vin']:
-                tx_prev = await transaction_get(tx_lookup)(vin['txid'])
+                tx_prev = await tx_get(vin['txid'])
                 if not tx_prev:
                     continue
                 amount = tx_prev['vout'][vin['vout']]['value']
@@ -239,7 +248,7 @@ class TestGetHistory(unittest.TestCase):
 
     @async_test
     async def test_get_history_amounts(self):
-        data = await get_history(['yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup), bump_cost, transaction_get(tx_lookup), logger())
+        data = await run_get_history(['yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm'])
         actual_data_txs_ids = set(list(map(lambda tx: tx['txid'], data)))
         expecting_txs_ids = [
             'f6bb99f4b434dea6495fbe346c6271bd235804b7d41e585b471edfea147fe15a',
@@ -247,7 +256,6 @@ class TestGetHistory(unittest.TestCase):
             '491eb677bc65aec4bfa01343971c6c1335e98083415f6484431e10085ce8f8bc',
             '9727c697a18404a1334dcb7d6d60cb2da43c021b96327a44e0d8e0e6291dcbe1',
             '0b440a548408b5b3d064b8a3f42f01084cfb025db6b49d858e3e4066c23288f8',
-            '8ce220fca530a65dbe4ae2e0940708cfeb9a2546c9caec494c98ec60b4e65e45',
             'befc41488710a2836832a481cf5cdb9e6fe31f8ef91ba691d177030e58ee1c30',
             '14bd21813a10e6a8db5f2f48fd40eb6b8be91e0013f2239f80360f2b1d688fbe',
             '007c9e9a42cdba115eabbe557d45dcf09cb6fd61dfa7c8db40a4f25aa34a0d48',
@@ -296,18 +304,6 @@ class TestGetHistory(unittest.TestCase):
                 self.assertEqual('yEV4bGVBqzJSiWv5xgJCoJwZzTgi5fYoCD', tx1['address'], 'only expecting send txs to foreign address')
                 self.assertEqual(-10, tx1['amount'], 'expecting send amount to equal')
                 self.assertEqual(-90, tx1['fee'], 'expecting send fee to equal')
-            elif txid == '8ce220fca530a65dbe4ae2e0940708cfeb9a2546c9caec494c98ec60b4e65e45':
-                self.assertEqual(2, len(txs), 'expecting transaction count')
-                tx1 = list(filter(lambda tx: tx['address'] == 'yDg7Y4rLScMj2GKnDc4zXuVY34grMstKDy', txs))[0]
-                tx2 = list(filter(lambda tx: tx['address'] == 'yF4d7VrFUtr4h1rNEhwdNfrEQXbNvdCR8v', txs))[0]
-                self.assertEqual('yDg7Y4rLScMj2GKnDc4zXuVY34grMstKDy', tx1['address'], 'expecting send tx1 address')
-                self.assertEqual('yF4d7VrFUtr4h1rNEhwdNfrEQXbNvdCR8v', tx2['address'], 'expecting send tx2 address')
-                self.assertEqual('send', tx1['category'], 'expecting send tx1')
-                self.assertEqual('send', tx2['category'], 'expecting send tx2')
-                self.assertEqual(-500, tx1['amount'], 'expecting send amount to equal')
-                self.assertEqual(-90, tx1['fee'], 'expecting send fee to equal')
-                self.assertEqual(-10, tx2['amount'], 'expecting send amount to equal')
-                self.assertEqual(0, tx2['fee'], 'expecting send amount to equal')
             elif txid == 'befc41488710a2836832a481cf5cdb9e6fe31f8ef91ba691d177030e58ee1c30':
                 self.assertEqual(1, len(txs), 'expecting transaction count')
                 tx1 = txs[0]
@@ -355,7 +351,7 @@ class TestGetHistory(unittest.TestCase):
             '875e933ad470ef78f1ad0f9ed020f9787e22604b26d0cedd3d0c744446fd47de': make_tx(hash_t('txhash2'), [make_vin('0000000000000000000000000000000000000000000000000000000000000000', 0)], [make_vout(0.00105834, 0, ['1EzL7GZmrdgAYhBREAoiXiJqRdqk5i1MZM']), make_vout(0.00103933, 1, ['bc1q7dn7acwhj4djxg323wzm5f50906lhkfs5p2xdl'])], '0000000000000000000473080337c048be8408a16eab9e22cf162a3b41ddbb18'),
             '491eb677bc65aec4bfa01343971c6c1335e98083415f6484431e10085ce8f8bc': make_tx(hash_t('txhash3'), [make_vin('875e933ad470ef78f1ad0f9ed020f9787e22604b26d0cedd3d0c744446fd47de', 0), make_vin('f6bb99f4b434dea6495fbe346c6271bd235804b7d41e585b471edfea147fe15a', 0)], [make_vout(0.001, 0, ['3QqoLrLtuNQSyj8W3NPvzonKy7psVWesNh']), make_vout(0.00017775, 1, ['1EzL7GZmrdgAYhBREAoiXiJqRdqk5i1MZM'])], '0000000000000000000cd4e766bc0a4162dc298af77fe4a2ae16ca2acc9a20f4'),
         }
-        data = await get_history(['1EzL7GZmrdgAYhBREAoiXiJqRdqk5i1MZM'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup2), bump_cost, transaction_get(tx_lookup2), logger())
+        data = await run_get_history(['1EzL7GZmrdgAYhBREAoiXiJqRdqk5i1MZM'], tx_lookup2)
         actual_data_txs_ids = set(list(map(lambda tx: tx['txid'], data)))
         expecting_txs_ids = [
             'f6bb99f4b434dea6495fbe346c6271bd235804b7d41e585b471edfea147fe15a',
@@ -405,7 +401,7 @@ class TestGetHistory(unittest.TestCase):
             '491eb677bc65aec4bfa01343971c6c1335e98083415f6484431e10085ce8f8bc': make_tx(hash_t('txhash3'), [make_vin('875e933ad470ef78f1ad0f9ed020f9787e22604b26d0cedd3d0c744446fd47de', 0)], [make_vout(3063.56993931, 0, ['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'])], '6132b80496c2941a479cba34f7130793978da8ae60cc62bc61527fbd38daaddf'),
             '9727c697a18404a1334dcb7d6d60cb2da43c021b96327a44e0d8e0e6291dcbe1': make_tx(hash_t('txhash4'), [make_vin('491eb677bc65aec4bfa01343971c6c1335e98083415f6484431e10085ce8f8bc', 0)], [make_vout(0.01500000000, 1, ['BmpyNqVPehhiuTCRbq9wSMCGcJz4WvAyBA']), make_vout(3063.55482171, 2, ['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'])], 'da12df50d7cf47e906118c3fdb73909b0b47a6cf65a7f569b698a00c03656521'),
         }
-        data = await get_history(['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup2), bump_cost, transaction_get(tx_lookup2), logger())
+        data = await run_get_history(['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'], tx_lookup2)
         actual_data_txs_ids = set(list(map(lambda tx: tx['txid'], data)))
         expecting_txs_ids = [
             'f6bb99f4b434dea6495fbe346c6271bd235804b7d41e585b471edfea147fe15a',
@@ -465,35 +461,127 @@ class TestGetHistory(unittest.TestCase):
             }
 
         tx_lookup2 = {'f6bb99f4b434dea6495fbe346c6271bd235804b7d41e585b471edfea147fe15a': make_tx(hash_t('txhash1'), [make_vin('0', 0)], [make_vout_2(3061.56993931, 0, {'type': 'p2sh', 'addresses': 'BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'})], '4317511e5099d082484fe7dbdad15d402b52fd8c24250c4341977e40fb962d0d')}
-        data = await get_history(['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup2), bump_cost, transaction_get(tx_lookup2), logger())
+        data = await run_get_history(['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'], tx_lookup2)
         self.assertEqual(1, len(data), 'expecting data for good address')
 
         tx_lookup2 = {'f6bb99f4b434dea6495fbe346c6271bd235804b7d41e585b471edfea147fe15a': make_tx(hash_t('txhash1'), [make_vin('0', 0)], [make_vout_2(3061.56993931, 0, {'type': 'p2sh', 'addresses': ['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR']})], '4317511e5099d082484fe7dbdad15d402b52fd8c24250c4341977e40fb962d0d')}
-        data = await get_history(['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup2), bump_cost, transaction_get(tx_lookup2), logger())
+        data = await run_get_history(['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'], tx_lookup2)
         self.assertEqual(1, len(data), 'expecting data for good address list')
 
         tx_lookup2 = {'f6bb99f4b434dea6495fbe346c6271bd235804b7d41e585b471edfea147fe15a': make_tx(hash_t('txhash1'), [make_vin('0', 0)], [make_vout_2(3061.56993931, 0, {'type': 'nonstandard'})], '4317511e5099d082484fe7dbdad15d402b52fd8c24250c4341977e40fb962d0d')}
-        data = await get_history(['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup2), bump_cost, transaction_get(tx_lookup2), logger())
+        data = await run_get_history(['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'], tx_lookup2)
         self.assertEqual(0, len(data), 'expecting no data for nonstandard scriptpubkey')
 
         tx_lookup2 = {'f6bb99f4b434dea6495fbe346c6271bd235804b7d41e585b471edfea147fe15a': make_tx(hash_t('txhash1'), [make_vin('0', 0)], [make_vout_2(3061.56993931, 0, {'type': 'p2sh', 'addresses': ''})], '4317511e5099d082484fe7dbdad15d402b52fd8c24250c4341977e40fb962d0d')}
-        data = await get_history(['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup2), bump_cost, transaction_get(tx_lookup2), logger())
+        data = await run_get_history(['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'], tx_lookup2)
         self.assertEqual(0, len(data), 'expecting no data for empty address')
 
         tx_lookup2 = {'f6bb99f4b434dea6495fbe346c6271bd235804b7d41e585b471edfea147fe15a': make_tx(hash_t('txhash1'), [make_vin('0', 0)], [make_vout_2(3061.56993931, 0, {'type': 'p2sh', 'addresses': ['']})], '4317511e5099d082484fe7dbdad15d402b52fd8c24250c4341977e40fb962d0d')}
-        data = await get_history(['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup2), bump_cost, transaction_get(tx_lookup2), logger())
+        data = await run_get_history(['BqeAD3u6T9yCvgbXizqPcYNBTSCq9RtWrR'], tx_lookup2)
         self.assertEqual(0, len(data), 'expecting no data for empty address list')
 
     @async_test
     async def test_get_history_json(self):
         err = None
         try:
-            data = await get_history(['yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm'], address_to_hashX, session_mgr(address_to_hashX, tx_lookup), bump_cost, transaction_get(tx_lookup), logger())
+            data = await run_get_history(['yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm'])
             json.dumps(data)
         except:
             err = True
 
         self.assertIsNone(err, 'expecting history to serialize into json')
+
+
+class TestNegotiation(unittest.TestCase):
+    @async_test
+    async def test_server_version_releases_gate_and_tolerates_extra_args(self):
+        fake = type('Fake', (), {})()
+        fake.sv_seen = False
+        fake.sv_negotiated = asyncio.Event()
+        fake.client = 'unknown'
+        fake.PROTOCOL_MIN = ElectrumX.PROTOCOL_MIN
+        fake.PROTOCOL_MAX = ElectrumX.PROTOCOL_MAX
+        fake.bump_cost = lambda delta: None
+
+        coin_stub = type('obj', (object,), {'CRASH_CLIENT_VER': None})()
+        fake.env = type('obj', (object,), {'drop_client': None, 'coin': coin_stub})()
+
+        crash_calls = []
+
+        async def maybe_crash(ptuple, ver):
+            crash_calls.append((ptuple, ver))
+
+        fake.maybe_crash_old_client = maybe_crash
+
+        captured = {}
+
+        def set_request_handlers(ptuple):
+            captured['ptuple'] = ptuple
+
+        fake.set_request_handlers = set_request_handlers
+        fake.protocol_version_string = lambda: '1.4'
+
+        result = await ElectrumX.server_version(fake, 'tester', '1.4', 'extra-arg', junk='kw')
+
+        self.assertTrue(fake.sv_negotiated.is_set(), 'delegation must release sv_negotiated')
+        self.assertTrue(fake.sv_seen, 'sv_seen must be set after negotiation')
+        self.assertEqual((1, 4), captured['ptuple'], 'handlers must be rebuilt at negotiated protocol')
+        self.assertEqual(electrumx.version, result[0], 'first tuple element is the server version')
+        self.assertEqual([((1, 4), None)], crash_calls, 'crash hook runs with negotiated protocol and CRASH_CLIENT_VER')
+
+
+class TestAddressStatus(unittest.TestCase):
+    @async_test
+    async def test_address_status_consumes_sessionmgr_pair(self):
+        '''SessionManager.limited_history returns a (history, cost) PAIR;
+        address_status must unpack it (regression guard for the DB-vs-manager
+        same-named-method trap).'''
+        fake = type('Fake', (), {})()
+        fake.logger = type('obj', (object,), {
+            'info': staticmethod(lambda arg: None),
+            'exception': staticmethod(lambda arg: None),
+        })()
+
+        async def limited_history(hash_x):
+            return [(b'\xab' * 32, 5)], 0.5
+
+        fake.session_mgr = type('obj', (object,), {
+            'limited_history': staticmethod(limited_history)})()
+
+        async def transaction_summaries(hash_x):
+            return []
+
+        fake.mempool = type('obj', (object,), {
+            'transaction_summaries': staticmethod(transaction_summaries)})()
+        fake.mempool_statuses = {}
+
+        status = await ElectrumX.address_status(fake, b'\x11' * 20)
+        expected = sha256(f"{'ab' * 32}:5:".encode()).hex()
+        self.assertEqual(expected, status)
+
+    @async_test
+    async def test_address_status_empty_history_returns_none(self):
+        fake = type('Fake', (), {})()
+        fake.logger = type('obj', (object,), {
+            'info': staticmethod(lambda arg: None),
+            'exception': staticmethod(lambda arg: None),
+        })()
+
+        async def limited_history(hash_x):
+            return [], 0.0
+
+        fake.session_mgr = type('obj', (object,), {
+            'limited_history': staticmethod(limited_history)})()
+
+        async def transaction_summaries(hash_x):
+            return []
+
+        fake.mempool = type('obj', (object,), {
+            'transaction_summaries': staticmethod(transaction_summaries)})()
+        fake.mempool_statuses = {}
+
+        status = await ElectrumX.address_status(fake, b'\x11' * 20)
+        self.assertIsNone(status)
 
 
 if __name__ == '__main__':

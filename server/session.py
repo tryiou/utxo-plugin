@@ -688,7 +688,7 @@ class ElectrumX(SessionBase):
                     biggest_sent_amount_my_address = 0
                     biggest_sent_address_my_address = ''
 
-                    fees = total_send_amount * -1
+                    fees = (total_send_amount + my_total_send_amount) * -1
 
                     def valid_spend(p_spent_ids, p_address, p_amount, p_category, p_item, p_tx, p_from_addresses):
                         p_txid_n = (p_tx['txid'], p_item['n'], p_category)

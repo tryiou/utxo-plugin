@@ -15,12 +15,15 @@ ARG HASH_CFLAGS=-DPY_SSIZE_T_CLEAN
 
 COPY requirements.txt .
 RUN CFLAGS=${HASH_CFLAGS} sh -c '\
-      pip install --no-cache-dir scrypt x11_hash && \
+      pip install --no-cache-dir x11_hash && \
       pip install --no-cache-dir -r requirements.txt'
 
-# Build-time smoke: fails the image build if the hash exts regress (e.g. flag lost)
-RUN python3 -c "import quark_hash, x11_hash; \
-    assert quark_hash.getPoWHash(b'') and x11_hash.getPoWHash(b'')"
+# Build-time smoke: fails the image build if any hash ext regresses (e.g. flag lost).
+# kawpow exposes light_verify() only, so it is import-checked without a hash call.
+RUN python3 -c "import quark_hash, x11_hash, dash_hash, kawpow, x16r_hash, x16rv2_hash; \
+    assert quark_hash.getPoWHash(b'') and x11_hash.getPoWHash(b'') and \
+           dash_hash.getPoWHash(b'') and x16r_hash.getPoWHash(b'') and \
+           x16rv2_hash.getPoWHash(b'')"
 
 COPY --chown=utxo:utxo . /app/plugins
 RUN chmod 755 /app/plugins/entrypoint.sh
