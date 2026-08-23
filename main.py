@@ -101,6 +101,7 @@ def main(db_compacted=False):
     skip_compacting = environ.get('SKIP_COMPACT', 'false')
     
     print('[utxoplugin] Data-Directory: {}'.format(db_dir))
+    logging.basicConfig(level=logging.WARNING)
 
     delete_lock_files()
 
@@ -134,7 +135,7 @@ def main(db_compacted=False):
     env = Env(coin=MappedCoin)
 
     print("[utxoplugin] Coin: {}, Port: {}, Daemon RPC Port: {}".format(coin, port, rpc_port))
-    print("[utxoplugin] Using URL\n{}".format(url))
+    print("[utxoplugin] Using daemon RPC at {}:{}".format(coin_host_addr, rpc_port))
 
     env.rpc_port = port
     print("[utxoplugin] Starting RPC on port " + str(env.rpc_port))
@@ -162,7 +163,12 @@ def main(db_compacted=False):
     logging.info('ElectrumX server starting')
 
     server = Controller(env)
-    asyncio.run(server.run())
+    try:
+        asyncio.run(server.run())
+    except BaseException:
+        print('[utxoplugin] main: fatal, asyncio.run raised:')
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

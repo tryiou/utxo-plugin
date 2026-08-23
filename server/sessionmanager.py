@@ -3,13 +3,14 @@ from electrumx.server.session import SessionManager
 
 class SessionManagerMixin(SessionManager):
     def __init__(self, env, db, bp, daemon, mempool, shutdown_event):
-        super().__init__(env, db, bp, daemon, mempool, shutdown_event)
+        super().__init__(env=env, db=db, block_processor=bp, daemon=daemon,
+                         mempool=mempool, shutdown_event=shutdown_event)
         self.bsub_results = None
         self._cache_counter = 0
 
     async def _notify_sessions(self, height, touched):
         self._cache_counter += 1
-        for cache in (self._tx_hashes_cache, self._merkle_cache):
+        for cache in (self._txids_cache, self._merkle_txid_cache):
             for key in range(height, self.db.db_height + 1):
                 if key in cache:
                     del cache[key]

@@ -1,19 +1,33 @@
-FROM python:3.9-buster
+FROM python:3.12-trixie
 
-COPY . /app/plugins
 WORKDIR /app/plugins
 
-RUN apt-get update
-RUN apt-get install -y build-essential cmake musl-dev gcc g++ libffi-dev libssl-dev python3-dev curl libkrb5-dev librocksdb-dev libleveldb-dev libsnappy-dev liblz4-dev
-RUN pip install scrypt x11_hash
-RUN pip install -r /app/plugins/requirements.txt
-RUN rm -rf /var/cache/apk/*
-RUN rm -rf /usr/share/man
-RUN rm -rf /tmp/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake gcc g++ libffi-dev libssl-dev python3-dev curl \
+    pkg-config libkrb5-dev librocksdb-dev libleveldb-dev libsnappy-dev liblz4-dev gosu \
+ && rm -rf /var/lib/apt/lists/*
 
-ENV ALLOW_ROOT 1
+RUN useradd --create-home --uid 1000 utxo
+
+# quark_hash/x11_hash sdists predate Python 3.12's mandatory PY_SSIZE_T_CLEAN
+# ('#' C-API formats). REMOVE THIS ARG once the base image is Python >= 3.13.
+ARG HASH_CFLAGS=-DPY_SSIZE_T_CLEAN
+
+COPY requirements.txt .
+RUN CFLAGS=${HASH_CFLAGS} sh -c '\
+      pip install --no-cache-dir scrypt x11_hash && \
+      pip install --no-cache-dir -r requirements.txt'
+
+# Build-time smoke: fails the image build if the hash exts regress (e.g. flag lost)
+RUN python3 -c "import quark_hash, x11_hash; \
+    assert quark_hash.getPoWHash(b'') and x11_hash.getPoWHash(b'')"
+
+COPY --chown=utxo:utxo . /app/plugins
+RUN chmod 755 /app/plugins/entrypoint.sh
+
 ENV EVENT_LOOP_POLICY="uvloop"
 
 EXPOSE 8000 9000
 
+ENTRYPOINT ["/app/plugins/entrypoint.sh"]
 CMD ["python3", "/app/plugins/main.py"]

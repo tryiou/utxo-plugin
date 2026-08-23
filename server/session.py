@@ -9,6 +9,7 @@ from aiorpcx import ReplyAndDisconnect, RPCError
 from electrumx.lib.hash import sha256, hash_to_hex_str, hex_str_to_hash
 from electrumx.server.daemon import DaemonError
 from electrumx.server.session import SessionBase, assert_tx_hash, scripthash_to_hashX, non_negative_integer
+from electrumx.server.session import ElectrumX as _StockElectrumX
 
 BAD_REQUEST = 1
 DAEMON_ERROR = 2
@@ -29,7 +30,6 @@ class ElectrumX(SessionBase):
         self.subscribe_blocks = False
         self.connection.max_response_size = self.env.max_send
         self.hashX_subs = {}
-        self.sv_seen = False
         self.mempool_statuses = {}
         self.set_request_handlers(self.PROTOCOL_MIN)
         self.is_peer = False
@@ -65,7 +65,6 @@ class ElectrumX(SessionBase):
         }
 
     async def server_features_async(self):
-        self.bump_cost(0.2)
         return self.server_features(self.env)
 
     @classmethod
@@ -133,18 +132,15 @@ class ElectrumX(SessionBase):
     async def headers_subscribe(self):
         '''Subscribe to get raw headers of new blocks.'''
         self.subscribe_headers = True
-        self.bump_cost(0.25)
         return await self.subscribe_headers_result()
 
     async def add_peer(self, features):
         '''Add a peer (but only if the peer resolves to the source).'''
         self.is_peer = True
-        self.bump_cost(100.0)
         return await self.peer_mgr.on_add_peer(features, self.remote_address())
 
     async def peers_subscribe(self):
         '''Return the server peers as a list of (ip, host, details) tuples.'''
-        self.bump_cost(1.0)
         return self.peer_mgr.on_peers_subscribe(self.is_tor())
 
     async def address_status(self, hashX):
@@ -164,7 +160,6 @@ class ElectrumX(SessionBase):
                           for tx in mempool)
 
         # Add status hashing cost
-        self.bump_cost(cost + 0.1 + len(status) * 0.00002)
 
         if status:
             status = sha256(status.encode()).hex()
@@ -184,7 +179,6 @@ class ElectrumX(SessionBase):
         utxos = await self.db.all_utxos(hashX)
         utxos = sorted(utxos)
         utxos.extend(await self.mempool.unordered_UTXOs(hashX))
-        self.bump_cost(1.0 + len(utxos) / 50)
         spends = await self.mempool.potential_spends(hashX)
 
         return [{'tx_hash': hash_to_hex_str(utxo.tx_hash),
@@ -221,7 +215,6 @@ class ElectrumX(SessionBase):
         utxos = await self.db.all_utxos(hashX)
         utxos = sorted(utxos)
         utxos.extend(await self.mempool.unordered_UTXOs(hashX))
-        self.bump_cost(1.0 + len(utxos) / 50)
         spends = await self.mempool.potential_spends(hashX)
 
         return [{'address': address,
@@ -256,13 +249,11 @@ class ElectrumX(SessionBase):
                    'height': -tx.has_unconfirmed_inputs,
                    'fee': tx.fee}
                   for tx in await self.mempool.transaction_summaries(hashX)]
-        self.bump_cost(0.25 + len(result) / 50)
         return result
 
     async def confirmed_and_unconfirmed_history(self, hashX):
         # Note history is ordered but unconfirmed is unordered in e-s
         history, cost = await self.session_mgr.limited_history(hashX)
-        self.bump_cost(cost)
         conf = [{'tx_hash': hash_to_hex_str(tx_hash), 'height': height}
                 for tx_hash, height in history]
         return conf + await self.unconfirmed_history(hashX)
@@ -290,7 +281,6 @@ class ElectrumX(SessionBase):
 
     async def scripthash_unsubscribe(self, scripthash):
         '''Unsubscribe from a script hash.'''
-        self.bump_cost(0.1)
         hashX = scripthash_to_hashX(scripthash)
         return self.unsubscribe_hashX(hashX) is not None
 
@@ -314,7 +304,6 @@ class ElectrumX(SessionBase):
         height = non_negative_integer(height)
         cp_height = non_negative_integer(cp_height)
         raw_header_hex = (await self.session_mgr.raw_header(height)).hex()
-        self.bump_cost(1.25 - (cp_height == 0))
         if cp_height == 0:
             return raw_header_hex
         result = {'header': raw_header_hex}
@@ -346,7 +335,6 @@ class ElectrumX(SessionBase):
             cost += 1.0
             last_height = start_height + count - 1
             result.update(await self._merkle_proof(cp_height, last_height))
-        self.bump_cost(cost)
         return result
 
     async def block_headers_12(self, start_height, count):
@@ -401,7 +389,6 @@ class ElectrumX(SessionBase):
     async def banner(self):
         '''Return the server banner text.'''
         banner = f'You are connected to an {electrumx.version} server.'
-        self.bump_cost(0.5)
 
         if self.is_tor():
             banner_file = self.env.tor_banner_file
@@ -429,7 +416,6 @@ class ElectrumX(SessionBase):
         number: the number of blocks
         '''
         number = non_negative_integer(number)
-        self.bump_cost(2.0)
         return await self.daemon_request('estimatefee', number)
 
     async def ping(self):
@@ -438,49 +424,17 @@ class ElectrumX(SessionBase):
         '''
         return None
 
-    async def server_version(self, client_name='', protocol_version=None):
-        '''Returns the server version as a string.
-        client_name: a string identifying the client
-        protocol_version: the protocol version spoken by the client
+    async def server_version(self, client_name='', protocol_version=None,
+                             *extra_args, **extra_kwargs):
+        '''Delegate to the stock implementation so negotiation stays
+        single-sourced upstream (gate release, crash hook, arg tolerance).
         '''
-        self.bump_cost(0.5)
-        if self.sv_seen:
-            raise RPCError(BAD_REQUEST, f'server.version already sent')
-        self.sv_seen = True
-
-        if client_name:
-            client_name = str(client_name)
-            if self.env.drop_client is not None and \
-                    self.env.drop_client.match(client_name):
-                raise ReplyAndDisconnect(RPCError(
-                    BAD_REQUEST, f'unsupported client: {client_name}'))
-            self.client = client_name[:17]
-
-        # Find the highest common protocol version.  Disconnect if
-        # that protocol version in unsupported.
-        ptuple, client_min = util.protocol_version(
-            protocol_version, self.PROTOCOL_MIN, self.PROTOCOL_MAX)
-
-        await self.crash_old_client(ptuple, self.env.coin.CRASH_CLIENT_VER)
-
-        if ptuple is None:
-            if client_min > self.PROTOCOL_MIN:
-                self.logger.info(f'client requested future protocol version '
-                                 f'{util.version_string(client_min)} '
-                                 f'- is your software out of date?')
-            raise ReplyAndDisconnect(RPCError(
-                BAD_REQUEST, f'unsupported protocol version: {protocol_version}'))
-        self.set_request_handlers(ptuple)
-
-        return (electrumx.version, self.protocol_version_string())
-
-    async def maybe_attempt_to_crash_old_client(self, proto_ver):
-        return
+        return await _StockElectrumX.server_version(
+            self, client_name, protocol_version)
 
     async def transaction_broadcast(self, raw_tx):
         '''Broadcast a raw transaction to the network.
         raw_tx: the raw transaction as a hexadecimal string'''
-        self.bump_cost(0.25 + len(raw_tx) / 5000)
         # This returns errors as JSON RPC errors, as is natural
         try:
             hex_hash = await self.session_mgr.broadcast_transaction(raw_tx)
@@ -512,7 +466,6 @@ class ElectrumX(SessionBase):
         if verbose not in (True, False):
             raise RPCError(BAD_REQUEST, f'"verbose" must be a boolean')
 
-        self.bump_cost(1.0)
         return await self.daemon_request('getrawtransaction', tx_hash, verbose)
 
     async def _block_hash_and_tx_hashes(self, height):
@@ -550,7 +503,6 @@ class ElectrumX(SessionBase):
 
         branch, tx_pos, cost = await self.session_mgr.merkle_branch_for_tx_hash(
             height, tx_hash)
-        self.bump_cost(cost)
 
         return {"block_height": height, "merkle": branch, "pos": tx_pos}
 
@@ -566,7 +518,6 @@ class ElectrumX(SessionBase):
         if merkle:
             branch, tx_hash, cost = await self.session_mgr.merkle_branch_for_tx_pos(
                 height, tx_pos)
-            self.bump_cost(cost)
             return {"tx_hash": tx_hash, "merkle": branch}
         else:
             tx_hashes, cost = await self.session_mgr.tx_hashes_at_blockheight(height)
@@ -575,11 +526,9 @@ class ElectrumX(SessionBase):
             except IndexError:
                 raise RPCError(BAD_REQUEST,
                                f'no tx at position {tx_pos:,d} in block at height {height:,d}')
-            self.bump_cost(cost)
             return hash_to_hex_str(tx_hash)
 
     async def compact_fee_histogram(self):
-        self.bump_cost(1.0)
         return await self.mempool.compact_fee_histogram()
 
     async def getrawmempool(self, verbose=False):
@@ -701,6 +650,8 @@ class ElectrumX(SessionBase):
                     total_send_amount = 0
                     my_total_send_amount = 0
                     for item in tx['vin']:
+                        if 'txid' not in item:
+                            continue
                         prev_tx = await self.transaction_get(item['txid'], verbose=True)
                         if not prev_tx:
                             #self.logger.debug(f'Previous transaction not found: {item["txid"]}')
@@ -950,6 +901,8 @@ class ElectrumX(SessionBase):
                 total_send_amount = 0
                 my_total_send_amount = 0
                 for item in tx['vin']:
+                    if 'txid' not in item:
+                        continue
                     prev_tx = await self.transaction_get(item['txid'], verbose=True)
                     if not prev_tx:
                         continue
@@ -1450,9 +1403,9 @@ class AuxPoWElectrumX(ElectrumX):
 
 class BitcoinSegwitElectrumX(ElectrumX):
 
-    async def maybe_attempt_to_crash_old_client(self, proto_ver):
+    async def maybe_crash_old_client(self, ptuple, crash_client_ver):
         client_ver = util.protocol_tuple(self.client)
-        is_old_protocol = proto_ver is None or proto_ver <= (1, 2)
+        is_old_protocol = ptuple is None or ptuple <= (1, 2)
         is_old_client = client_ver != (0,) and client_ver < (3, 2, 4)
         if is_old_protocol and is_old_client:
             self.logger.info(f'attempting to crash old client with version {self.client}')
