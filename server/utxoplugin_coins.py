@@ -103,7 +103,7 @@ class Syscoin(AuxPowHelper, Coin):
     NET = "mainnet"
 
     P2PKH_VERBYTE = bytes.fromhex("3f")
-    P2SH_VERBYTES = bytes.fromhex("05")
+    P2SH_VERBYTES = (bytes.fromhex("05"),)
     WIF_BYTE = bytes.fromhex("80")
 
     GENESIS_HASH = '0000022642db0346b6e01c2a397471f4f12e65d4f4251ec96c1f85367a61a7ab'
@@ -490,7 +490,7 @@ class Pivx(Coin):
     XPRV_VERBYTES = bytes.fromhex("0221312B")
     GENESIS_HASH = '0000041e482b9b9691d98eefb48473405c0b8ec31b76df3797c74a78680ef818'
     P2PKH_VERBYTE = bytes.fromhex("1e")
-    P2SH_VERBYTE = bytes.fromhex("0d")
+    P2SH_VERBYTES = (bytes.fromhex("0d"),)
     WIF_BYTE = bytes.fromhex("d4")
     DESERIALIZER = lib_tx.DeserializerPIVX
     TX_COUNT_HEIGHT = 569399

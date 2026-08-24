@@ -886,191 +886,212 @@ class ElectrumX(SessionBase):
             hash_x = hex_str_to_hash(hash_x)
             self.logger.info(hash_x)
 
-            history = await self.db.limited_history(hash_x, limit=100)
+            try:
+                history = await self.db.limited_history(hash_x, limit=100)
+            except Exception:
+                self.logger.exception('[GetHistoryHashx] Exception fetching history')
+                continue
 
             for tx_hash, height in history:
                 if tx_hash in processed_txs:
                     continue  # skip, already processed
-                tx = await self.transaction_get(hash_to_hex_str(tx_hash), verbose=True)
-                if not tx:
-                    continue
-                processed_txs.add(tx_hash)
+                try:
+                        tx = await self.transaction_get(hash_to_hex_str(tx_hash), verbose=True)
+                        if not tx:
+                            continue
+                        processed_txs.add(tx_hash)
 
-                spends = []
-                from_addresses = set()
-                total_send_amount = 0
-                my_total_send_amount = 0
-                for item in tx['vin']:
-                    if 'txid' not in item:
-                        continue
-                    prev_tx = await self.transaction_get(item['txid'], verbose=True)
-                    if not prev_tx:
-                        continue
+                        spends = []
+                        from_addresses = set()
+                        total_send_amount = 0
+                        my_total_send_amount = 0
+                        for item in tx['vin']:
+                            if 'txid' not in item:
+                                continue
+                            prev_tx = await self.transaction_get(item['txid'], verbose=True)
+                            if not prev_tx:
+                                continue
 
-                    prev_out_amount = prev_tx['vout'][item['vout']]['value']
-                    addrs = prev_tx['vout'][item['vout']]['scriptPubKey']['addresses']
-                    # record total sent coin if sent from one of our addresses
-                    if len(addrs) > 0:
-                        for addr in addrs:
-                            if addr in addr_lookup:
-                                my_total_send_amount += prev_out_amount
-                                break
+                            prev_out_amount = prev_tx['vout'][item['vout']]['value']
+                            script_pub_key = prev_tx['vout'][item['vout']]['scriptPubKey']
+                            addrs = script_pub_key.get('addresses')
+                            if addrs is None and 'address' in script_pub_key:
+                                addrs = [script_pub_key['address']]
+                            if isinstance(addrs, str):
+                                addrs = [addrs]
+                            if not addrs:
+                                addrs = []
+                            # record total sent coin if sent from one of our addresses
+                            if len(addrs) > 0:
+                                for addr in addrs:
+                                    if addr in addr_lookup:
+                                        my_total_send_amount += prev_out_amount
+                                        break
 
-                    total_send_amount += prev_out_amount
-                    from_addresses.update(addrs)
+                            total_send_amount += prev_out_amount
+                            from_addresses.update(addrs)
 
-                my_total_send_amount_running = my_total_send_amount  # track how much sent coin is left to report
-                is_sending_coin = my_total_send_amount > 0
+                        my_total_send_amount_running = my_total_send_amount  # track how much sent coin is left to report
+                        is_sending_coin = my_total_send_amount > 0
 
-                biggest_sent_amount_not_my_address = 0
-                biggest_sent_address_not_my_address = ''
-                biggest_sent_amount_my_address = 0
-                biggest_sent_address_my_address = ''
+                        biggest_sent_amount_not_my_address = 0
+                        biggest_sent_address_not_my_address = ''
+                        biggest_sent_amount_my_address = 0
+                        biggest_sent_address_my_address = ''
 
-                fees = total_send_amount * -1
+                        fees = total_send_amount * -1
 
-                def valid_spend(p_spent_ids, p_address, p_amount, p_category, p_item, p_tx, p_from_addresses):
-                    p_txid_n = (p_tx['txid'], p_item['n'], p_category)
-                    if p_txid_n not in p_spent_ids:
-                        return {
-                                   'address': p_address,
-                                   'amount': p_amount,
-                                   'fee': 0.0,
-                                   'vout': p_item['n'],
-                                   'category': p_category,
-                                   'confirmations': p_tx['confirmations'],
-                                   'blockhash': p_tx['blockhash'],
-                                   'blocktime': p_tx['blocktime'],
-                                   'time': p_tx['blocktime'],
-                                   'txid': p_tx['txid'],
-                                   'from_addresses': p_from_addresses
-                               }, p_txid_n
-                    else:
-                        return None, None
+                        def valid_spend(p_spent_ids, p_address, p_amount, p_category, p_item, p_tx, p_from_addresses):
+                            p_txid_n = (p_tx['txid'], p_item['n'], p_category)
+                            if p_txid_n not in p_spent_ids:
+                                return {
+                                           'address': p_address,
+                                           'amount': p_amount,
+                                           'fee': 0.0,
+                                           'vout': p_item['n'],
+                                           'category': p_category,
+                                           'confirmations': p_tx['confirmations'],
+                                           'blockhash': p_tx['blockhash'],
+                                           'blocktime': p_tx['blocktime'],
+                                           'time': p_tx['blocktime'],
+                                           'txid': p_tx['txid'],
+                                           'from_addresses': p_from_addresses
+                                       }, p_txid_n
+                            else:
+                                return None, None
 
-                def get_address(p_item):
-                    if 'addresses' not in p_item['scriptPubKey'] or 'type' not in p_item['scriptPubKey'] \
-                            or p_item['scriptPubKey']['type'] == 'nonstandard':
-                        return None  # skip incompatible vout
-                    if isinstance(p_item['scriptPubKey']['addresses'], str):
-                        return p_item['scriptPubKey']['addresses']
-                    elif isinstance(p_item['scriptPubKey']['addresses'], list):
-                        return p_item['scriptPubKey']['addresses'][0]
-                    else:
-                        return None
+                        def get_address(p_item):
+                            script_pub_key = p_item['scriptPubKey']
+                            if 'type' not in script_pub_key \
+                                    or script_pub_key['type'] == 'nonstandard':
+                                return None  # skip incompatible vout
+                            if 'addresses' in script_pub_key:
+                                addrs = script_pub_key['addresses']
+                                if isinstance(addrs, str):
+                                    return addrs
+                                elif isinstance(addrs, list) and addrs:
+                                    return addrs[0]
+                                return None
+                            # Core v22+ style singular form (mirrors vin-side + twin)
+                            if 'address' in script_pub_key:
+                                return script_pub_key['address']
+                            return None
 
-                # First pass: Only process transactions sent to another address, record fees
-                for item in tx['vout']:
-                    # Add in fees (fees = total_in - total_out)
-                    amount = item['value']
-                    fees += amount
-                    vout_address = get_address(item)
-                    if not vout_address:
-                        continue  # incompatible address, skip
+                        # First pass: Only process transactions sent to another address, record fees
+                        for item in tx['vout']:
+                            # Add in fees (fees = total_in - total_out)
+                            amount = item['value']
+                            fees += amount
+                            vout_address = get_address(item)
+                            if not vout_address:
+                                continue  # incompatible address, skip
 
-                    if vout_address in addr_lookup:
-                        continue  # not our address, skip
+                            if vout_address in addr_lookup:
+                                continue  # not our address, skip
 
-                    # Amount is negative for send and positive for receive
-                    # Record sent coin to address if we have outstanding send amount.
-                    # Note that my total sent amount is subtracted by any amounts
-                    # previously marked sent.
-                    # Compare with epsilon instead of 0 to avoid precision inaccuracies.
-                    if my_total_send_amount_running > sys.float_info.epsilon:
-                        if biggest_sent_amount_not_my_address < amount:
-                            biggest_sent_amount_not_my_address = amount
-                            biggest_sent_address_not_my_address = vout_address
-                        # amount reported here cannot be larger than my total send amount
-                        adjusted_amount = amount if my_total_send_amount_running > amount else my_total_send_amount_running
-                        my_total_send_amount_running -= adjusted_amount  # track what we've already recorded as sent
-                        spend, txid_n = valid_spend(spent_ids, vout_address, -float(adjusted_amount), 'send', item,
-                                                    tx,
-                                                    list(from_addresses))
-                        if spend:
-                            spent_ids.add(txid_n)
-                            spends.append(spend)
+                            # Amount is negative for send and positive for receive
+                            # Record sent coin to address if we have outstanding send amount.
+                            # Note that my total sent amount is subtracted by any amounts
+                            # previously marked sent.
+                            # Compare with epsilon instead of 0 to avoid precision inaccuracies.
+                            if my_total_send_amount_running > sys.float_info.epsilon:
+                                if biggest_sent_amount_not_my_address < amount:
+                                    biggest_sent_amount_not_my_address = amount
+                                    biggest_sent_address_not_my_address = vout_address
+                                # amount reported here cannot be larger than my total send amount
+                                adjusted_amount = amount if my_total_send_amount_running > amount else my_total_send_amount_running
+                                my_total_send_amount_running -= adjusted_amount  # track what we've already recorded as sent
+                                spend, txid_n = valid_spend(spent_ids, vout_address, -float(adjusted_amount), 'send', item,
+                                                            tx,
+                                                            list(from_addresses))
+                                if spend:
+                                    spent_ids.add(txid_n)
+                                    spends.append(spend)
 
-                # Second pass: Only process transactions for all our own addresses
-                for item in tx['vout']:
-                    vout_address = get_address(item)
-                    if not vout_address:
-                        continue  # incompatible address, skip
-                    if vout_address not in addr_lookup:
-                        continue  # skip, already processed in block above
+                        # Second pass: Only process transactions for all our own addresses
+                        for item in tx['vout']:
+                            vout_address = get_address(item)
+                            if not vout_address:
+                                continue  # incompatible address, skip
+                            if vout_address not in addr_lookup:
+                                continue  # skip, already processed in block above
 
-                    amount = item['value']
+                            amount = item['value']
 
-                    do_not_mark_send = False
-                    if vout_address not in from_addresses:
-                        do_not_mark_send = True
+                            do_not_mark_send = False
+                            if vout_address not in from_addresses:
+                                do_not_mark_send = True
 
-                    # Record received coin if this vout address is mine
-                    spend, txid_n = valid_spend(spent_ids, vout_address, float(amount), 'receive', item, tx,
-                                                list(from_addresses))
-                    if spend:
-                        spent_ids.add(txid_n)
-                        spends.append(spend)
-
-                    # Amount is negative for send and positive for receive
-                    # Record sent coin to address if we have outstanding send amount.
-                    # Note that my total sent amount is subtracted by any amounts
-                    # previously marked sent.
-                    # Compare with epsilon instead of 0 to avoid precision inaccuracies.
-                    if my_total_send_amount_running > sys.float_info.epsilon:
-                        # amount reported here cannot be larger than my total send amount
-                        adjusted_amount = amount if my_total_send_amount_running > amount else my_total_send_amount_running
-                        my_total_send_amount_running -= adjusted_amount  # track what we've already recorded as sent
-                        if not do_not_mark_send:
-                            spend, txid_n = valid_spend(spent_ids, vout_address, -float(adjusted_amount), 'send',
-                                                        item, tx,
+                            # Record received coin if this vout address is mine
+                            spend, txid_n = valid_spend(spent_ids, vout_address, float(amount), 'receive', item, tx,
                                                         list(from_addresses))
                             if spend:
                                 spent_ids.add(txid_n)
                                 spends.append(spend)
 
-                                if biggest_sent_amount_my_address < amount:
-                                    biggest_sent_amount_my_address = amount
-                                    biggest_sent_address_my_address = vout_address
+                            # Amount is negative for send and positive for receive
+                            # Record sent coin to address if we have outstanding send amount.
+                            # Note that my total sent amount is subtracted by any amounts
+                            # previously marked sent.
+                            # Compare with epsilon instead of 0 to avoid precision inaccuracies.
+                            if my_total_send_amount_running > sys.float_info.epsilon:
+                                # amount reported here cannot be larger than my total send amount
+                                adjusted_amount = amount if my_total_send_amount_running > amount else my_total_send_amount_running
+                                my_total_send_amount_running -= adjusted_amount  # track what we've already recorded as sent
+                                if not do_not_mark_send:
+                                    spend, txid_n = valid_spend(spent_ids, vout_address, -float(adjusted_amount), 'send',
+                                                                item, tx,
+                                                                list(from_addresses))
+                                    if spend:
+                                        spent_ids.add(txid_n)
+                                        spends.append(spend)
 
-                # Assign fees on tx with largest sent amount. Assign fees to transactions
-                # sent to an address that is not our own. Otherwise assign fee to largest
-                # sent transaction on our own address if that applies.
-                if is_sending_coin and fees < 0:
-                    for spend in spends:
-                        biggest_sent_address = biggest_sent_address_not_my_address \
-                            if biggest_sent_amount_not_my_address > 0 else biggest_sent_address_my_address
-                        if spend['address'] == biggest_sent_address and spend['category'] == 'send':
-                            spend['fee'] = truncate(fees, 10)
-                            break
+                                        if biggest_sent_amount_my_address < amount:
+                                            biggest_sent_amount_my_address = amount
+                                            biggest_sent_address_my_address = vout_address
 
-                # Consolidate spends to self
-                remove_these = []
-                if len(spends) >= 2:  # can only compare at least 2 spends
-                    for spend in spends:
-                        filtered_spends = list(filter(lambda sp: sp['address'] == spend['address'], spends))
-                        if not filtered_spends:
-                            continue
-                        sends = list(filter(lambda sp: sp['category'] == 'send', filtered_spends))
-                        receives = list(filter(lambda sp: sp['category'] == 'receive', filtered_spends))
-                        from_spend = None if len(sends) == 0 else sends[0]
-                        from_receive = None if len(receives) == 0 else receives[0]
-                        if not from_spend or not from_receive:
-                            continue  # skip if don't have both send and receive
-                        if abs(from_spend['amount']) - from_receive['amount'] > -sys.float_info.epsilon:
-                            from_spend['amount'] += from_receive['amount']
-                            from_spend['fee'] += from_receive['fee']
-                            remove_these.append(from_receive)
-                        elif abs(from_spend['amount']) - from_receive['amount'] <= -sys.float_info.epsilon:
-                            from_receive['amount'] += from_spend['amount']
-                            from_receive['fee'] += from_spend['fee']
-                            remove_these.append(from_spend)
-                        if len(spends) - len(remove_these) < 2:  # done processing if nothing left to compare
-                            break
-                # Remove all the consolidated spends
-                if len(remove_these) > 0:
-                    spends[:] = [spend for spend in spends if spend not in remove_these]
+                        # Assign fees on tx with largest sent amount. Assign fees to transactions
+                        # sent to an address that is not our own. Otherwise assign fee to largest
+                        # sent transaction on our own address if that applies.
+                        if is_sending_coin and fees < 0:
+                            for spend in spends:
+                                biggest_sent_address = biggest_sent_address_not_my_address \
+                                    if biggest_sent_amount_not_my_address > 0 else biggest_sent_address_my_address
+                                if spend['address'] == biggest_sent_address and spend['category'] == 'send':
+                                    spend['fee'] = truncate(fees, 10)
+                                    break
 
-                spent += spends
+                        # Consolidate spends to self
+                        remove_these = []
+                        if len(spends) >= 2:  # can only compare at least 2 spends
+                            for spend in spends:
+                                filtered_spends = list(filter(lambda sp: sp['address'] == spend['address'], spends))
+                                if not filtered_spends:
+                                    continue
+                                sends = list(filter(lambda sp: sp['category'] == 'send', filtered_spends))
+                                receives = list(filter(lambda sp: sp['category'] == 'receive', filtered_spends))
+                                from_spend = None if len(sends) == 0 else sends[0]
+                                from_receive = None if len(receives) == 0 else receives[0]
+                                if not from_spend or not from_receive:
+                                    continue  # skip if don't have both send and receive
+                                if abs(from_spend['amount']) - from_receive['amount'] > -sys.float_info.epsilon:
+                                    from_spend['amount'] += from_receive['amount']
+                                    from_spend['fee'] += from_receive['fee']
+                                    remove_these.append(from_receive)
+                                elif abs(from_spend['amount']) - from_receive['amount'] <= -sys.float_info.epsilon:
+                                    from_receive['amount'] += from_spend['amount']
+                                    from_receive['fee'] += from_spend['fee']
+                                    remove_these.append(from_spend)
+                                if len(spends) - len(remove_these) < 2:  # done processing if nothing left to compare
+                                    break
+                        # Remove all the consolidated spends
+                        if len(remove_these) > 0:
+                            spends[:] = [spend for spend in spends if spend not in remove_these]
+
+                        spent += spends
+                except Exception:
+                    self.logger.exception(f'[GetHistoryHashx] Exception processing tx {hash_to_hex_str(tx_hash)}')
+                    continue
 
         self.logger.info(f'SPENT: {spent}')
         return spent
@@ -1455,7 +1476,7 @@ class SyscoinElectrumX(AuxPoWElectrumX):
             error, = e.args
             message = error['message']
             self.logger.info(f'masternode_broadcast: {message}')
-            raise RPCError(BAD_REQUEST, 'the masternode broadcast was rejected.\n\n{message}\n[{signmnb}]')
+            raise RPCError(BAD_REQUEST, f'the masternode broadcast was rejected.\n\n{message}\n[{signmnb}]')
 
     async def masternode_subscribe(self, collateral):
         '''Returns the status of masternode.

@@ -584,5 +584,241 @@ class TestAddressStatus(unittest.TestCase):
         self.assertIsNone(status)
 
 
+class TestCoinClassConformance(unittest.TestCase):
+    def test_p2sh_verbytes_plural_and_sequence(self):
+        import inspect
+        import server.utxoplugin_coins as coin_mod
+        checked = 0
+        for name, cls in inspect.getmembers(coin_mod, inspect.isclass):
+            if 'NAME' not in vars(cls):
+                continue
+            self.assertNotIn(
+                'P2SH_VERBYTE', vars(cls),
+                f'{name} overrides singular P2SH_VERBYTE; use P2SH_VERBYTES sequence')
+            verbytes = getattr(cls, 'P2SH_VERBYTES', None)
+            self.assertIsInstance(verbytes, (list, tuple),
+                                  f'{name}.P2SH_VERBYTES must be a list/tuple of verbytes')
+            self.assertTrue(len(verbytes) > 0, f'{name}.P2SH_VERBYTES is empty')
+            for vb in verbytes:
+                self.assertIsInstance(vb, bytes, f'{name} verbyte not bytes: {vb!r}')
+                self.assertEqual(1, len(vb), f'{name} verbyte not single byte: {vb!r}')
+            checked += 1
+        self.assertGreater(checked, 10, 'conformance sweep matched no coin classes')
+
+    def test_pivx_p2sh_address_converts(self):
+        '''Roundtrip through Pivx's own conversion stack. Internal hashX is
+        HASHX_LEN (11-byte sha256 script truncation, upstream canon), so the
+        contract is consistency with the coin's own methods, not any fixed
+        20-byte shape.'''
+        from electrumx.lib.hash import double_sha256, HASHX_LEN
+        from electrumx.lib.coins import CoinError
+        from server.utxoplugin_coins import Pivx
+
+        alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+        hash160 = bytes(range(20))
+        payload = b'\x0d' + hash160
+        checksum = double_sha256(payload)[:4]
+        n = int.from_bytes(payload + checksum, 'big')
+        chars = []
+        while n:
+            n, rem = divmod(n, 58)
+            chars.append(alphabet[rem])
+        pad = len(payload) - len(payload.lstrip(b'\x00'))
+        address = '1' * pad + ''.join(reversed(chars))
+
+        # decode level: verbyte+hash160 survive base58check intact
+        raw = Pivx.DECODE_CHECK(address)
+        self.assertEqual(payload, raw)
+
+        # script level: proper P2SH script for our hash160
+        script = Pivx.pay_to_address_script(address)
+        self.assertEqual(bytes.fromhex('a914') + hash160 + bytes.fromhex('87'), script)
+
+        # hashX level: consistent with the coin's own derivation, HASHX_LEN long
+        hash_x = Pivx.address_to_hashX(address)
+        self.assertEqual(HASHX_LEN, len(hash_x))
+        self.assertEqual(Pivx.hashX_from_script(script), hash_x)
+
+        # garbage base58 -> Base58Error from decode; checksum-valid address
+        # with an unmatched verbyte -> CoinError from the gate itself
+        from electrumx.lib.hash import Base58Error
+        with self.assertRaises(Base58Error):
+            Pivx.address_to_hashX('not a valid address at all')
+
+        payload_wrong = b'\x13' + hash160
+        cs_w = double_sha256(payload_wrong)[:4]
+        n_w = int.from_bytes(payload_wrong + cs_w, 'big')
+        ch_w = []
+        while n_w:
+            n_w, rem = divmod(n_w, 58)
+            ch_w.append(alphabet[rem])
+        wrong = ''.join(reversed(ch_w))
+        with self.assertRaises(CoinError):
+            Pivx.address_to_hashX(wrong)
+
+
+class TestGetHistoryHashx(unittest.TestCase):
+    '''get_history_hashx compares vout address strings against hashx_list
+    entries verbatim (:915/:971/:998). Callers passing scripthash hex get
+    structurally-false membership (documented known state); these tests use
+    hex-string pseudo-addresses present in BOTH vouts and the list so the
+    full pipeline - ownership credit, send/receive rows, fee assignment,
+    self-send consolidation - is exercised end-to-end.'''
+
+    @staticmethod
+    def _make_self(db_history, tx_lookup):
+        s = type('FakeSession', (), {})()
+        s.logger = type('obj', (object,), {
+            'info': staticmethod(lambda arg: None),
+            'exception': staticmethod(lambda arg: None),
+        })()
+
+        async def limited_history(hash_x, limit=100):
+            return db_history
+
+        s.db = type('obj', (object,), {'limited_history': staticmethod(limited_history)})()
+
+        async def transaction_get(txid, verbose=False):
+            return tx_lookup.get(txid)
+
+        s.transaction_get = transaction_get
+        return s
+
+    @staticmethod
+    def _sample_lookup(mine='ab' * 20, other='cd' * 20):
+        prev_tx = make_tx(hash_t('prev'), [make_vin('0' * 64, 0)],
+                          [make_vout(777, 0, [mine])], 'aa' * 32)
+        spend_tx = make_tx(hash_t('spend'), [make_vin(hash_to_hex_str(hash_t('prev')), 0)],
+                           [make_vout(500, 0, [mine]), make_vout(250, 1, [other])],
+                           'bb' * 32)
+        lookup = {hash_to_hex_str(prev_tx['txhash']): prev_tx,
+                  hash_to_hex_str(spend_tx['txhash']): spend_tx}
+        return lookup, spend_tx
+
+    @async_test
+    async def test_get_history_hashx_full_pipeline_rows_and_fees(self):
+        mine, other = 'ab' * 20, 'cd' * 20
+        lookup, spend_tx = self._sample_lookup()
+
+        fake = self._make_self([(spend_tx['txhash'], 5)], lookup)
+        spent = await ElectrumX.get_history_hashx(fake, [mine])
+
+        sends = [row for row in spent if row['category'] == 'send']
+        receives = [row for row in spent if row['category'] == 'receive']
+        # external send to `other` survives with fee assigned
+        self.assertEqual(1, len([s for s in sends if s['address'] == other]))
+        self.assertEqual(-250.0, [s for s in sends if s['address'] == other][0]['amount'])
+        self.assertNotEqual(0.0, [s for s in sends if s['address'] == other][0]['fee'])
+        # KNOWN PRE-EXISTING QUIRK: the consolidation loop revisits the same
+        # same-address pair when len(spends)>=3 (no pair-processed guard),
+        # flipping the merge direction on the second pass and dropping BOTH
+        # self-rows. Pinned here as current behavior; not "fixed" silently.
+        self.assertEqual([], [r for r in spent if r['address'] == mine])
+        self.assertEqual(1, len(spent))
+        for row in spent:
+            for key in ('address', 'amount', 'fee', 'vout', 'category',
+                        'confirmations', 'blockhash', 'blocktime', 'txid'):
+                self.assertIn(key, row)
+
+    @async_test
+    async def test_get_history_hashx_survives_prevout_without_addresses(self):
+        mine = 'ab' * 20
+        lookup, spend_tx = self._sample_lookup()
+        prev_key = hash_to_hex_str(hash_t('prev'))
+        del lookup[prev_key]['vout'][0]['scriptPubKey']['addresses']
+
+        fake = self._make_self([(spend_tx['txhash'], 5)], lookup)
+        spent = await ElectrumX.get_history_hashx(fake, [mine])
+
+        # no ownership credit (prevout has no addresses) -> no send marking;
+        # own receive still emitted; above all: no KeyError escapes the RPC
+        self.assertEqual(1, len(spent))
+        self.assertEqual('receive', spent[0]['category'])
+        self.assertEqual(500.0, spent[0]['amount'])
+        self.assertEqual(mine, spent[0]['address'])
+
+    @async_test
+    async def test_get_history_hashx_survives_null_addresses_prevout(self):
+        mine = 'ab' * 20
+        lookup, spend_tx = self._sample_lookup()
+        lookup[hash_to_hex_str(hash_t('prev'))]['vout'][0]['scriptPubKey']['addresses'] = None
+
+        fake = self._make_self([(spend_tx['txhash'], 5)], lookup)
+        spent = await ElectrumX.get_history_hashx(fake, [mine])
+
+        # daemon emitted "addresses": null -> treated as no-address vin;
+        # no ownership credit, receive row still emitted, no TypeError escapes
+        self.assertEqual(1, len(spent))
+        self.assertEqual('receive', spent[0]['category'])
+        self.assertEqual(500.0, spent[0]['amount'])
+        self.assertEqual(mine, spent[0]['address'])
+
+    @async_test
+    async def test_get_history_hashx_singular_vout_address_emits_rows(self):
+        '''Core v22+-style singular scriptPubKey.address on the VOUT side:
+        receive row must still be emitted (vin/vout symmetry with the twin).'''
+        mine = 'ab' * 20
+        prev_tx = make_tx(hash_t('prev'), [make_vin('0' * 64, 0)],
+                          [make_vout(777, 0, [mine])], 'aa' * 32)
+        spend_tx = make_tx(hash_t('spend'), [make_vin(hash_to_hex_str(hash_t('prev')), 0)],
+                           [make_vout(500, 0, [mine])], 'bb' * 32)
+        # rewrite both sides to singular form
+        for tx in (prev_tx, spend_tx):
+            for vout in tx['vout']:
+                spk = vout['scriptPubKey']
+                spk['address'] = spk['addresses'][0]
+                del spk['addresses']
+        lookup = {hash_to_hex_str(prev_tx['txhash']): prev_tx,
+                  hash_to_hex_str(spend_tx['txhash']): spend_tx}
+
+        fake = self._make_self([(spend_tx['txhash'], 5)], lookup)
+        spent = await ElectrumX.get_history_hashx(fake, [mine])
+
+        # without the singular fallback both passes skip every vout -> spent
+        # would be []. With it, send+receive consolidate into ONE net-zero
+        # self-row (category stays 'send' on a clean single merge).
+        self.assertEqual(1, len(spent))
+        self.assertEqual(mine, spent[0]['address'])
+        self.assertAlmostEqual(0.0, spent[0]['amount'], places=9)
+        self.assertNotEqual(0.0, spent[0]['fee'])  # fees = -(777)+500 assigned
+
+    @async_test
+    async def test_get_history_hashx_string_addresses_prevout_credits_owner(self):
+        '''Legacy-daemon shape "addresses": "<addr>" (bare string) on the
+        prevout: without normalization the string iterates per-character and
+        ownership credit is silently missed; with it, send+receive merge into
+        one net-zero self-row exactly like the list form.'''
+        mine = 'ab' * 20
+        prev_tx = make_tx(hash_t('prev'), [make_vin('0' * 64, 0)],
+                          [make_vout(777, 0, [mine])], 'aa' * 32)
+        spend_tx = make_tx(hash_t('spend'), [make_vin(hash_to_hex_str(hash_t('prev')), 0)],
+                           [make_vout(500, 0, [mine])], 'bb' * 32)
+        # rewrite ONLY the prevout side to bare-string addresses
+        spk = prev_tx['vout'][0]['scriptPubKey']
+        spk['addresses'] = spk['addresses'][0]
+        lookup = {hash_to_hex_str(prev_tx['txhash']): prev_tx,
+                  hash_to_hex_str(spend_tx['txhash']): spend_tx}
+
+        fake = self._make_self([(spend_tx['txhash'], 5)], lookup)
+        spent = await ElectrumX.get_history_hashx(fake, [mine])
+
+        self.assertEqual(1, len(spent))
+        self.assertEqual(mine, spent[0]['address'])
+        self.assertAlmostEqual(0.0, spent[0]['amount'], places=9)
+        self.assertNotEqual(0.0, spent[0]['fee'])
+
+    @async_test
+    async def test_get_history_hashx_scripthash_input_yields_empty(self):
+        '''Pins current reality: wire-style scripthash entries never match
+        vout address strings, so the RPC returns [] (documented known state).'''
+        mine_addr = 'yDaL1ptNHk2EYrZ9BXeTdMRkGND9nBhLxm'
+        lookup, spend_tx = self._sample_lookup(mine=mine_addr)
+        scripthash_hex = hash_to_hex_str(sha256(b'scripthash-wire-form'))
+
+        fake = self._make_self([(spend_tx['txhash'], 5)], lookup)
+        spent = await ElectrumX.get_history_hashx(fake, [scripthash_hex])
+        self.assertEqual([], spent)
+
+
 if __name__ == '__main__':
     unittest.main()
