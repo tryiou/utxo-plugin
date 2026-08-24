@@ -877,10 +877,20 @@ class ElectrumX(SessionBase):
 
     async def get_history_hashx(self, hashx_list):
         self.logger.info('get_history_hashx: {}'.format(hashx_list))
-        addr_lookup = hashx_list
+        addr_lookup = set(hashx_list)
         spent = []
         spent_ids = set()
         processed_txs = set()  # track transactions that have already been processed
+
+        def addr_in_lookup(p_addr):
+            # hashx_list contains hashX hex strings while scriptPubKey carries
+            # addresses — compare in the hashX domain, otherwise no send is
+            # ever attributed (and receive attribution breaks the same way).
+            try:
+                return hash_to_hex_str(self.coin.address_to_hashX(p_addr)) in addr_lookup
+            except Exception:
+                return False
+
         for hash_x in addr_lookup:
             self.logger.info('get_history_hashx debug: {}'.format(hash_x))
             hash_x = hex_str_to_hash(hash_x)
@@ -924,7 +934,7 @@ class ElectrumX(SessionBase):
                             # record total sent coin if sent from one of our addresses
                             if len(addrs) > 0:
                                 for addr in addrs:
-                                    if addr in addr_lookup:
+                                    if addr_in_lookup(addr):
                                         my_total_send_amount += prev_out_amount
                                         break
 
@@ -986,7 +996,7 @@ class ElectrumX(SessionBase):
                             if not vout_address:
                                 continue  # incompatible address, skip
 
-                            if vout_address in addr_lookup:
+                            if vout_address in addr_lookup or addr_in_lookup(vout_address):
                                 continue  # not our address, skip
 
                             # Amount is negative for send and positive for receive
@@ -1013,7 +1023,7 @@ class ElectrumX(SessionBase):
                             vout_address = get_address(item)
                             if not vout_address:
                                 continue  # incompatible address, skip
-                            if vout_address not in addr_lookup:
+                            if vout_address not in addr_lookup and not addr_in_lookup(vout_address):
                                 continue  # skip, already processed in block above
 
                             amount = item['value']

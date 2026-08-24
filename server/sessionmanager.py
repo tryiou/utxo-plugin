@@ -7,6 +7,11 @@ class SessionManagerMixin(SessionManager):
                          mempool=mempool, shutdown_event=shutdown_event)
         self.bsub_results = None
         self._cache_counter = 0
+        # Masternode-list cache lives on the manager (sessions read
+        # session_mgr.mn_cache) — leaving these uninitialized made any
+        # masternode.list request raise AttributeError on DASH/SYS.
+        self.mn_cache = []
+        self.mn_cache_height = 0
 
     async def _notify_sessions(self, height, touched):
         self._cache_counter += 1

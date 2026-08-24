@@ -658,12 +658,12 @@ class TestCoinClassConformance(unittest.TestCase):
 
 
 class TestGetHistoryHashx(unittest.TestCase):
-    '''get_history_hashx compares vout address strings against hashx_list
-    entries verbatim (:915/:971/:998). Callers passing scripthash hex get
-    structurally-false membership (documented known state); these tests use
-    hex-string pseudo-addresses present in BOTH vouts and the list so the
-    full pipeline - ownership credit, send/receive rows, fee assignment,
-    self-send consolidation - is exercised end-to-end.'''
+    '''get_history_hashx compares scriptPubKey addresses against the hashX
+    list through coin.address_to_hashX (domain-correct attribution).
+    Fixtures use 20-byte hex pseudo-addresses so the converter is the
+    identity in the hex domain; the full pipeline - ownership credit,
+    send/receive rows, fee assignment, self-send consolidation - is
+    exercised end-to-end.'''
 
     @staticmethod
     def _make_self(db_history, tx_lookup):
@@ -672,6 +672,18 @@ class TestGetHistoryHashx(unittest.TestCase):
             'info': staticmethod(lambda arg: None),
             'exception': staticmethod(lambda arg: None),
         })()
+
+        class _FakeCoin:
+            '''get_history_hashx compares prevout/vout ADDRESSES against the
+            hashX list via coin.address_to_hashX. The fixtures use 20-byte
+            hex pseudo-addresses, so the converter is hex-decode (identity in
+            the hex domain). Base58 inputs raise -> correctly unmatched.'''
+
+            @staticmethod
+            def address_to_hashX(addr):
+                return bytes.fromhex(addr)
+
+        s.coin = _FakeCoin()
 
         async def limited_history(hash_x, limit=100):
             return db_history
