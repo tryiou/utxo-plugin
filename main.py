@@ -14,7 +14,7 @@ from server.utxoplugin_coins import (Coin, Blocknet, BlocknetTestnet,
                                      BitcoinSegwit, Bitcore, Litecoin, Dash, DigiByte,
                                      Syscoin, Phore, Alqo, Bitbay, Dogecoin, Ravencoin,
                                      Polis, Pivx, Trezarcoin, BitcoinCash, Stakenet,
-                                     Unobtanium, Pkoin)
+                                      Unobtanium, Pkoin, Verge)
 
 coin_map = {
     "BLOCK": Blocknet,
@@ -36,7 +36,8 @@ coin_map = {
     "TZC": Trezarcoin,
     "XSN": Stakenet,
     "UNO": Unobtanium,
-    "PKOIN": Pkoin
+    "PKOIN": Pkoin,
+    "XVG": Verge
 }
 
 coin = environ.get('PLUGIN_COIN')

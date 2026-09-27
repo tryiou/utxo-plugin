@@ -656,6 +656,72 @@ class TestCoinClassConformance(unittest.TestCase):
         with self.assertRaises(CoinError):
             Pivx.address_to_hashX(wrong)
 
+    def test_verge_p2sh_address_converts(self):
+        '''Roundtrip through Verge's own conversion stack. Verge verbytes
+        are decimal chainparams (PUBKEY_ADDRESS=30, SCRIPT_ADDRESS=33), i.e.
+        P2PKH 0x1e ('D...') and P2SH 0x21 ('E...'). Upstream ElectrumX
+        transcribes them as hex (0x30/0x33) — the negative case below pins
+        that exact regression: those prefixes must raise CoinError.'''
+        from electrumx.lib.hash import double_sha256, HASHX_LEN
+        from electrumx.lib.coins import CoinError
+        from server.utxoplugin_coins import Verge
+
+        alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
+        def b58check(payload):
+            checksum = double_sha256(payload)[:4]
+            n = int.from_bytes(payload + checksum, 'big')
+            chars = []
+            while n:
+                n, rem = divmod(n, 58)
+                chars.append(alphabet[rem])
+            pad = len(payload) - len(payload.lstrip(b'\x00'))
+            return '1' * pad + ''.join(reversed(chars))
+
+        hash160 = bytes(range(20))
+
+        # P2PKH 0x1e -> 'D...' address roundtrip
+        p2pkh = b58check(b'\x1e' + hash160)
+        self.assertTrue(p2pkh.startswith('D'))
+        self.assertEqual(b'\x1e' + hash160, Verge.DECODE_CHECK(p2pkh))
+
+        # P2SH 0x21 -> 'E...' address roundtrip through all three levels
+        address = b58check(b'\x21' + hash160)
+        self.assertTrue(address.startswith('E'))
+        raw = Verge.DECODE_CHECK(address)
+        self.assertEqual(b'\x21' + hash160, raw)
+
+        script = Verge.pay_to_address_script(address)
+        self.assertEqual(bytes.fromhex('a914') + hash160 + bytes.fromhex('87'), script)
+
+        hash_x = Verge.address_to_hashX(address)
+        self.assertEqual(HASHX_LEN, len(hash_x))
+        self.assertEqual(Verge.hashX_from_script(script), hash_x)
+
+        from electrumx.lib.hash import Base58Error
+        with self.assertRaises(Base58Error):
+            Verge.address_to_hashX('not a valid address at all')
+
+        # Upstream-confused prefixes (decimal digits read as hex) must NOT
+        # resolve: 0x30 P2PKH-style and 0x33 P2SH-style.
+        for bad_verbyte in (b'\x30', b'\x33'):
+            with self.assertRaises(CoinError):
+                Verge.address_to_hashX(b58check(bad_verbyte + hash160))
+
+    def test_verge_header_hash_uses_stdlib_scrypt(self):
+        '''Verge.header_hash must return deterministic 32-byte scrypt digests
+        via stdlib hashlib (no PyPI `scrypt` dependency).'''
+        from hashlib import scrypt as stdlib_scrypt
+        from server.utxoplugin_coins import Verge
+
+        header = bytes(range(80))
+        digest = Verge.header_hash(header)
+        self.assertEqual(32, len(digest))
+        self.assertEqual(digest, Verge.header_hash(header))
+        self.assertEqual(
+            stdlib_scrypt(header, salt=header, n=1024, r=1, p=1, dklen=32),
+            digest)
+
 
 class TestGetHistoryHashx(unittest.TestCase):
     '''get_history_hashx compares scriptPubKey addresses against the hashX
