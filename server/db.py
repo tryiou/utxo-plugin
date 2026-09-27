@@ -2,6 +2,7 @@ import asyncio
 import os
 from aiorpcx import run_in_thread
 from electrumx.server.db import DB
+from server.compact_policy import CompactRestartRequested, parse_threshold
 
 
 # Slice size for cooperative header hashing.  Upstream builds the header
@@ -18,6 +19,8 @@ MERKLE_CHUNK_ENVVAR = 'MERKLE_CHUNK_HEADERS'
 class Database(DB):
     def __init__(self, env):
         super().__init__(env)
+        # Fail fast on a bad threshold at startup, not mid-serve.
+        self.compact_threshold = parse_threshold()
 
     @staticmethod
     def merkle_chunk_size():
@@ -52,6 +55,30 @@ class Database(DB):
                 self.logger.info(f'hashed {done:,d}/{count:,d} headers')
             await asyncio.sleep(0)
         return hashes
+
+    def flush_dbs(self, flush_data, flush_utxos, estimate_txs_remaining):
+        """Upstream flush plus the serve-time compaction tripwire.
+
+        The flush is committed first, so on-disk state is consistent
+        when the tripwire fires.  Raising (rather than exiting here)
+        is the cross-thread vehicle: this runs in a flush worker
+        thread, and only an exception propagating to ``main`` stops
+        the process -- a ``sys.exit`` here would merely kill the
+        worker thread.  ``main`` turns this into a clean
+        COMPACT_RESTART exit, and the restart policy bounces the
+        container straight into ``compact_history`` on next boot.
+        Gated on ``not first_sync``: an initial sync is one long
+        catch-up, not steady serving, and there is nothing worth
+        compacting yet.
+        """
+        super().flush_dbs(flush_data, flush_utxos, estimate_txs_remaining)
+        if not self.first_sync and self.first_sync is not None:
+            flush_count = self.history.flush_count
+            if flush_count >= self.compact_threshold:
+                raise CompactRestartRequested(
+                    'flush_count {:,d} >= threshold {:,d}; exiting '
+                    'for compaction restart'.format(
+                        flush_count, self.compact_threshold))
 
     async def raw_block(self, height):
         if height < 0:

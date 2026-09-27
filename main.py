@@ -5,10 +5,14 @@ import sys
 import logging
 import traceback
 from os import environ, getcwd, mkdir, remove
-from os.path import isdir, exists
+from os.path import isdir, exists, join
 from electrumx import Env
 from electrumx.lib.util import CompactFormatter, make_logger
 from server.db import Database
+from server.compact_policy import (
+    COMPACT_EXIT_CODE, CompactRestartRequested,
+    parse_threshold, should_compact,
+)
 from server.controller import Controller
 from server.utxoplugin_coins import (Coin, Blocknet, BlocknetTestnet,
                                      BitcoinSegwit, Bitcore, Litecoin, Dash, DigiByte,
@@ -55,7 +59,7 @@ environ['PEER_ANNOUNCE'] = ''
 environ['SERVICES'] = 'tcp://:{},rpc://:{},ws://:50000'.format(int(port) + 1000, port)
 
 
-async def compact_history(env):
+async def compact_history(env, threshold, skip_compacting):
     if sys.version_info < (3, 7):
         raise RuntimeError('Python >= 3.7 is required to run ElectrumX')
 
@@ -63,10 +67,22 @@ async def compact_history(env):
     db = Database(env)
     await db.open_for_compacting()
 
-    if db.first_sync or db.first_sync is None:
-        return
-
+    # State is read from the already-open handle: opening a second
+    # (serve-flavoured) handle would cancel an in-progress compaction.
     history = db.history
+    do_compact, reason = should_compact(
+        db.first_sync, skip_compacting,
+        history.flush_count, history.comp_cursor, threshold)
+    print('[utxoplugin] compact decision: {} reason={} flush_count={} '
+          'threshold={} comp_cursor={}'.format(
+              'compact' if do_compact else 'skip', reason,
+              history.flush_count, threshold, history.comp_cursor))
+
+    if not do_compact:
+        _close_compacting_db(db)
+        delete_lock_files()
+        return 'skipped'
+
     # Continue where we left off, if interrupted
     if history.comp_cursor == -1:
         history.comp_cursor = 0
@@ -80,19 +96,37 @@ async def compact_history(env):
     # When completed also update the UTXO flush count
     db.set_flush_count(history.flush_count)
 
-    del db
+    _close_compacting_db(db)
 
     delete_lock_files()
 
+    return 'compacted'
+
+
+def _close_compacting_db(db):
+    # Explicitly close both handles before serving: the serve phase
+    # opens fresh handles in a new Database, and a lingering open
+    # handle self-locks the DB (RocksIOError: ... LOCK).
+    try:
+        if db.utxo_db is not None:
+            db.utxo_db.close()
+    finally:
+        db.history.close_db()
+    print('[utxoplugin] compacting DB handles closed')
+
 
 def delete_lock_files():
+    # Absolute paths: this runs both pre-open (CWD is /app/plugins)
+    # and post-compaction (CWD is already the data dir after the
+    # upstream chdir), so relative removes only hit in the latter
+    # case -- absolute hits in both.
     try:
-        remove("utxo/LOCK")
+        remove(join(db_dir, "utxo/LOCK"))
     except Exception as e:
         print(e)
 
     try:
-        remove("hist/LOCK")
+        remove(join(db_dir, "hist/LOCK"))
     except Exception as e:
         print(e)
 
@@ -100,6 +134,7 @@ def delete_lock_files():
 def main(db_compacted=False):
     network = environ.get('NETWORK')
     skip_compacting = environ.get('SKIP_COMPACT', 'false')
+    threshold = parse_threshold()
     
     print('[utxoplugin] Data-Directory: {}'.format(db_dir))
     logging.basicConfig(level=logging.WARNING)
@@ -141,16 +176,25 @@ def main(db_compacted=False):
     env.rpc_port = port
     print("[utxoplugin] Starting RPC on port " + str(env.rpc_port))
 
-    if not db_compacted and skip_compacting != 'true':
-        print('[utxoplugin] compacting db history')
+    # Always enter the compaction path on a fresh boot: the threshold
+    # is only knowable after opening the DB, so the heal-always
+    # decision (threshold/resume regardless of SKIP_COMPACT) lives
+    # inside compact_history.
+    if not db_compacted:
+        print('[utxoplugin] compacting db history check')
 
         try:
-            asyncio.run(compact_history(env))
+            result = asyncio.run(
+                compact_history(env, threshold, skip_compacting))
         except Exception:
+            # Fail loud: serving now would cancel any partial
+            # compaction and mask the underlying DB problem.
             traceback.print_exc()
-            print('[utxoplugin] History compaction terminated abnormally')
+            print('[utxoplugin] History compaction terminated '
+                  'abnormally; refusing to serve')
+            sys.exit(1)
         else:
-            print('[utxoplugin] History compaction complete')
+            print('[utxoplugin] History compaction {}'.format(result))
 
         del env
         return main(db_compacted=True)
@@ -165,6 +209,13 @@ def main(db_compacted=False):
     server = Controller(env)
     try:
         asyncio.run(server.run())
+    except CompactRestartRequested as e:
+        # Serve-time tripwire (server.db.Database.flush_dbs): the
+        # flush count crossed the threshold after a committed flush.
+        # Exit for a compaction restart; the restart policy bounces
+        # the container straight into compact_history on next boot.
+        print('[utxoplugin] COMPACT_RESTART: {}'.format(e))
+        sys.exit(COMPACT_EXIT_CODE)
     except BaseException:
         print('[utxoplugin] main: fatal, asyncio.run raised:')
         traceback.print_exc()

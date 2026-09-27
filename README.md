@@ -13,6 +13,7 @@ Example docker-compose.yml entry for utxo coin, BLOCK:
       DB_ENGINE: 'rocksdb'
       NETWORK: 'mainnet'
       SKIP_COMPACT: 'true'
+      AUTO_COMPACT_THRESHOLD: '55000'
       DAEMON_ADDR: 172.31.4.37
       DAEMON_RPC_PORT: '41414'
       RPC_USER: "${RPC_USER}"
@@ -35,4 +36,11 @@ Example docker-compose.yml entry for utxo coin, BLOCK:
 DAEMON_ADDR is the IP addr of the container hosting the BLOCK daemon
 
 DAEMON_RPC_PORT is the RPC port of the BLOCK daemon
+
+AUTO_COMPACT_THRESHOLD is the history flush count at which the plugin
+heals itself (default '55000', upstream ElectrumX dies at 65,536).
+On boot the plugin compacts when the count is reached, whatever
+SKIP_COMPACT says; while serving, crossing it exits the process with
+code 75 so the container restart policy bounces it straight into
+compaction. Set a lower value temporarily to drill the loop.
 
