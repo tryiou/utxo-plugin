@@ -144,9 +144,8 @@ def main(db_compacted=False):
     if not db_compacted and skip_compacting != 'true':
         print('[utxoplugin] compacting db history')
 
-        loop = asyncio.get_event_loop()
         try:
-            loop.run_until_complete(compact_history(env))
+            asyncio.run(compact_history(env))
         except Exception:
             traceback.print_exc()
             print('[utxoplugin] History compaction terminated abnormally')
