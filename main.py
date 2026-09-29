@@ -16,9 +16,9 @@ from server.compact_policy import (
 from server.controller import Controller
 from server.utxoplugin_coins import (Coin, Blocknet, BlocknetTestnet,
                                      BitcoinSegwit, Bitcore, Litecoin, Dash, DigiByte,
-                                     Syscoin, Phore, Alqo, Bitbay, Dogecoin, Ravencoin,
-                                     Polis, Pivx, Trezarcoin, BitcoinCash, Stakenet,
-                                      Unobtanium, Pkoin, Verge)
+                                     Syscoin, Dogecoin, Ravencoin,
+                                     Pivx, BitcoinCash,
+                                     Unobtanium, Pkoin, Verge)
 
 coin_map = {
     "BLOCK": Blocknet,
@@ -31,14 +31,8 @@ coin_map = {
     "DASH": Dash,
     "DGB": DigiByte,
     "DOGE": Dogecoin,
-    "POLIS": Polis,
-    "PHR": Phore,
-    "XLQ": Alqo,
-    "BAY": Bitbay,
     "RVN": Ravencoin,
     "PIVX": Pivx,
-    "TZC": Trezarcoin,
-    "XSN": Stakenet,
     "UNO": Unobtanium,
     "PKOIN": Pkoin,
     "XVG": Verge
