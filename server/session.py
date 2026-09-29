@@ -60,6 +60,7 @@ class ElectrumX(SessionBase):
             'protocol_min': min_str,
             'protocol_max': max_str,
             'genesis_hash': env.coin.GENESIS_HASH,
+            'value_per_coin': env.coin.VALUE_PER_COIN,
             'hash_function': 'sha256',
             'services': [str(service) for service in env.report_services],
         }

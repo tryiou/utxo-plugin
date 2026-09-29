@@ -12,7 +12,6 @@ import electrumx.server.block_processor as block_proc
 from hashlib import sha256
 from electrumx.lib.script import OpCodes, _match_ops, ScriptPubKey
 from electrumx.lib.coins import AuxPowMixin, Coin as CoinBase
-from electrumx.lib.coins import Verge as UpstreamVerge
 from electrumx.lib.hash import double_sha256, HASHX_LEN
 
 from server.daemon import SyscoinDaemon
@@ -442,25 +441,21 @@ class Pkoin(Coin):
     DESERIALIZER = lib_tx.DeserializerTxTimeSegWit
 
 
-# Source: https://github.com/vergecurrency/verge (tag v26.8). Parameters
-# inherited from the ElectrumX 1.20.0 upstream reference class (genesis hash,
-# ports, tx-time deserializer) instead of duplicating them. MRO
-# (UpstreamVerge first) keeps upstream DESERIALIZER while local Coin supplies
-# SESSIONCLS/DAEMON/REORG_LIMIT. Explicitly overridden (NOT inherited):
-# - NAME/SHORTNAME pin identity (also opts into the conformance sweep);
-# - P2PKH_VERBYTE/P2SH_VERBYTES: upstream transcribes Verge's DECIMAL
-#   chainparams (30/33) as hex (0x30/0x33); correct bytes from
-#   src/chainparams.cpp (PUBKEY_ADDRESS=30, SCRIPT_ADDRESS=33) are
-#   0x1e/0x21. Inheriting upstream here rejects every real wallet address;
-# - WIF_BYTE: upstream defines none; Verge uses 0x9E (SECRET_KEY=158);
-# - header_hash: stdlib hashlib.scrypt instead of upstream's PyPI `scrypt`
-#   package, so no new dependency is required.
-class Verge(UpstreamVerge, Coin):
+class Verge(Coin):
     NAME = "Verge"
     SHORTNAME = "XVG"
+    NET = "mainnet"
+    VALUE_PER_COIN = 1000000
     P2PKH_VERBYTE = bytes.fromhex("1e")
     P2SH_VERBYTES = [bytes.fromhex("21")]
     WIF_BYTE = bytes.fromhex("9e")
+    GENESIS_HASH = ('00000fc63692467faeb20cdb3b53200d'
+                    'c601d75bdfa1001463304cc790d77278')
+    RPC_PORT = 20102
+    TX_COUNT = 500000
+    TX_COUNT_HEIGHT = 3082138
+    TX_PER_BLOCK = 1
+    DESERIALIZER = lib_tx.DeserializerVerge
 
     @classmethod
     def header_hash(cls, header):
