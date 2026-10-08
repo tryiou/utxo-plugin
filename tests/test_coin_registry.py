@@ -35,8 +35,8 @@ class TestCoinRegistryWellFormed(unittest.TestCase):
         # DAEMON_RPC_PORT env value, and not every coin class sets one.
         for ticker, cls in coin_map.items():
             with self.subTest(ticker=ticker):
-                self.assertRegex(cls.GENESIS_HASH, r'^[0-9a-f]{64}$')
+                self.assertRegex(cls.GENESIS_HASH, r"^[0-9a-f]{64}$")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

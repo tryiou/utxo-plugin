@@ -11,7 +11,7 @@ import os
 import sys
 
 #: Environment variable overriding the threshold.
-ENVVAR = 'AUTO_COMPACT_THRESHOLD'
+ENVVAR = "AUTO_COMPACT_THRESHOLD"
 
 #: Default: compact once the history flush count reaches this.
 #: Upstream ElectrumX packs the flush id as uint16
@@ -44,7 +44,7 @@ def parse_threshold(raw=None):
     boot).
     """
     if raw is None:
-        raw = os.environ.get(ENVVAR, '')
+        raw = os.environ.get(ENVVAR, "")
     if raw is None or (isinstance(raw, str) and not raw.strip()):
         return DEFAULT_THRESHOLD
     try:
@@ -52,14 +52,15 @@ def parse_threshold(raw=None):
     except (TypeError, ValueError):
         value = -1
     if value <= 0:
-        print('[utxoplugin] ERROR: {} must be a positive integer, '
-              'got {!r}'.format(ENVVAR, raw), file=sys.stderr)
+        print(
+            f"[utxoplugin] ERROR: {ENVVAR} must be a positive integer, got {raw!r}",
+            file=sys.stderr,
+        )
         sys.exit(1)
     return value
 
 
-def should_compact(first_sync, skip_compacting, flush_count,
-                   comp_cursor, threshold):
+def should_compact(first_sync, skip_compacting, flush_count, comp_cursor, threshold):
     """Decide whether to compact on boot.
 
     Returns ``(do_compact, reason)``.  Table, in priority order:
@@ -76,11 +77,11 @@ def should_compact(first_sync, skip_compacting, flush_count,
     - ``below-threshold``: nothing to do, go straight to serving.
     """
     if first_sync or first_sync is None:
-        return False, 'first-sync'
-    if skip_compacting != 'true':
-        return True, 'unconditional'
+        return False, "first-sync"
+    if skip_compacting != "true":
+        return True, "unconditional"
     if comp_cursor != -1:
-        return True, 'resume'
+        return True, "resume"
     if flush_count >= threshold:
-        return True, 'threshold'
-    return False, 'below-threshold'
+        return True, "threshold"
+    return False, "below-threshold"

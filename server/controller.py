@@ -1,35 +1,29 @@
-import electrumx
 from asyncio import Event
+
+import electrumx
 from aiorpcx import _version as aiorpcx_version
 from electrumx.lib.server_base import ServerBase
 from electrumx.lib.util import OldTaskGroup, version_string
-from electrumx.server.mempool import MemPool, MemPoolAPI
 from electrumx.server.controller import Notifications
-from server.sessionmanager import SessionManagerMixin
+from electrumx.server.mempool import MemPool, MemPoolAPI
+
 from server.db import Database
+from server.sessionmanager import SessionManagerMixin
 
 
 class Controller(ServerBase):
-    '''Manages server initialisation and stutdown.
-    Servers are started once the mempool is synced after the block
-    processor first catches up with the daemon.
-    '''
+    """Upstream controller with local Database and SessionManagerMixin."""
 
     async def serve(self, shutdown_event):
-        '''Start the RPC server and wait for the mempool to synchronize.  Then
-        start serving external clients.
-        '''
+        """Upstream serve flow with local Database and SessionManagerMixin."""
         try:
-            if not (0, 22, 0) <= aiorpcx_version:
-                raise RuntimeError('aiorpcX version >0.22.0 is required')
-
             env = self.env
             min_str, max_str = env.coin.SESSIONCLS.protocol_min_max_strings()
-            self.logger.info(f'software version: {electrumx.version}')
-            self.logger.info(f'aiorpcX version: {version_string(aiorpcx_version)}')
-            self.logger.info(f'supported protocol versions: {min_str}-{max_str}')
-            self.logger.info(f'event loop policy: {env.loop_policy}')
-            self.logger.info(f'reorg limit is {env.reorg_limit:,d} blocks')
+            self.logger.info(f"software version: {electrumx.version}")
+            self.logger.info(f"aiorpcX version: {version_string(aiorpcx_version)}")
+            self.logger.info(f"supported protocol versions: {min_str}-{max_str}")
+            self.logger.info(f"event loop policy: {env.loop_policy}")
+            self.logger.info(f"reorg limit is {env.reorg_limit:,d} blocks")
 
             notifications = Notifications()
             Daemon = env.coin.DAEMON
@@ -49,12 +43,26 @@ class Controller(ServerBase):
                 notifications.raw_transactions = daemon.getrawtransactions
                 notifications.lookup_utxos = db.lookup_utxos
                 MemPoolAPI.register(Notifications)
-                mempool = MemPool(env.coin, notifications)
+                mempool = MemPool(
+                    env.coin,
+                    notifications,
+                    refresh_secs=env.daemon_poll_interval_mempool_msec / 1000,
+                )
 
-                session_mgr = SessionManagerMixin(env, db, bp, daemon, mempool,
-                                                  shutdown_event)
+                session_mgr = SessionManagerMixin(
+                    env,
+                    db,
+                    bp,
+                    daemon,
+                    mempool,
+                    shutdown_event,
+                )
 
                 await daemon.height()
+
+                # Check if daemon is recent enough
+                await daemon.check_daemon_version()
+                await daemon.check_daemon_indexes()
 
                 caught_up_event = Event()
                 mempool_event = Event()
@@ -69,5 +77,5 @@ class Controller(ServerBase):
                     await group.spawn(bp.fetch_and_process_blocks(caught_up_event))
                     await group.spawn(wait_for_catchup())
         except Exception:
-            self.logger.exception('fatal error in Controller.serve')
+            self.logger.exception("fatal error in Controller.serve")
             raise

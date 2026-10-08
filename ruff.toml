@@ -1,0 +1,56 @@
+# N999 waiver: the repo directory is named `utxo-plugin` (Docker image
+# layout), so the package dirs inherit a hyphenated name that is not a
+# valid module identifier. They are never imported as top-level modules.
+[lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "N",
+    "UP",
+    "B",
+    "A",
+    "C4",
+    "C90",
+    "SIM",
+    "RET",
+    "RUF",
+    "PTH",
+    "ERA",
+    "TRY",
+    "PL",
+    "S",
+    "W",
+    "YTT",
+    "ARG",
+    "SLF",
+    "FBT",
+    "PERF",
+    "BLE",
+    "COM",
+]
+ignore = [
+    "D",
+    "ANN",
+    "PT",
+    "CPY",
+    "G",
+    "EM101",
+    "EM102",
+    "TRY003",
+    "N818",
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLR0917",
+    "C901",
+    "N806",
+    "FBT002",
+]
+
+[lint.pep8-naming]
+ignore-names = ["utxo-plugin"]
+
+[lint.per-file-ignores]
+"tests/*" = ["S101", "SLF001", "ARG002", "PLR2004", "N802"]

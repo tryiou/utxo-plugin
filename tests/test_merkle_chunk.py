@@ -12,6 +12,7 @@ Test strategy is deterministic (no wall-clock thresholds):
 a heartbeat task counting raw loop passes can only advance when the code
 under test yields.
 """
+
 import asyncio
 import logging
 import os
@@ -22,14 +23,14 @@ from electrumx.lib.merkle import Merkle, MerkleCache
 
 from server.db import Database
 
-
 HEADER_LEN = 80
-ENV_KEY = 'MERKLE_CHUNK_HEADERS'
+ENV_KEY = "MERKLE_CHUNK_HEADERS"
 
 
 def async_test(f):
     def wrapper(*args, **kwargs):
         asyncio.run(f(*args, **kwargs))
+
     return wrapper
 
 
@@ -51,19 +52,17 @@ class StubDB(Database):
 
     def __init__(self, count):
         # NOTE: super().__init__ intentionally not called (see class doc).
-        self.logger = logging.getLogger('test_merkle_chunk')
+        self.logger = logging.getLogger("test_merkle_chunk")
         self.coin = StubCoin
         self.db_height = count - 1
-        self._headers = b''.join(
-            bytes([n % 256]) * HEADER_LEN for n in range(count)
-        )
+        self._headers = b"".join(bytes([n % 256]) * HEADER_LEN for n in range(count))
 
     async def read_headers(self, start_height, count):
         disk = max(0, min(count, self.db_height + 1 - start_height))
         if not disk:
-            return b'', 0
+            return b"", 0
         off = start_height * HEADER_LEN
-        return self._headers[off:off + disk * HEADER_LEN], disk
+        return self._headers[off : off + disk * HEADER_LEN], disk
 
     def header_len(self, height):
         return HEADER_LEN
@@ -111,7 +110,7 @@ class TestChunkedBlockHashes(unittest.TestCase):
         heartbeat records 0 passes); PASSES with the chunked override
         (one yield per chunk of 10 over 500 headers -> >= 50 passes).
         """
-        os.environ[ENV_KEY] = '10'
+        os.environ[ENV_KEY] = "10"
         db = StubDB(500)
         _, passes = await run_with_heartbeat(db.fs_block_hashes(0, 500))
         self.assertGreaterEqual(passes, 50)
@@ -121,26 +120,31 @@ class TestChunkedBlockHashes(unittest.TestCase):
         """Chunking must not change a single hash for any length/chunk mix."""
         for count in (0, 1, 7, 100, 101, 500):
             with self.subTest(count=count):
-                os.environ[ENV_KEY] = '7'
+                os.environ[ENV_KEY] = "7"
                 chunked = await StubDB(count).fs_block_hashes(0, count)
-                os.environ[ENV_KEY] = str(10 ** 9)
+                os.environ[ENV_KEY] = str(10**9)
                 single = await StubDB(count).fs_block_hashes(0, count)
                 self.assertEqual(chunked, single)
 
     @async_test
     async def test_chunked_output_matches_merkle_root(self):
         """End-to-end: real MerkleCache roots agree chunked vs single-shot."""
-        os.environ[ENV_KEY] = '7'
+        os.environ[ENV_KEY] = "7"
         chunked = await StubDB(300).fs_block_hashes(0, 300)
-        os.environ[ENV_KEY] = str(10 ** 9)
+        os.environ[ENV_KEY] = str(10**9)
         single = await StubDB(300).fs_block_hashes(0, 300)
+
         async def source(hashes):
             async def get(start, n):
-                return hashes[start:start + n]
+                return hashes[start : start + n]
+
             return get
+
         # initialize() returns None; compare via fresh caches' branches
-        mc1, mc2 = MerkleCache(Merkle(), await source(chunked)), \
-            MerkleCache(Merkle(), await source(single))
+        mc1, mc2 = (
+            MerkleCache(Merkle(), await source(chunked)),
+            MerkleCache(Merkle(), await source(single)),
+        )
         await mc1.initialize(len(chunked))
         await mc2.initialize(len(single))
         self.assertEqual(
@@ -151,7 +155,7 @@ class TestChunkedBlockHashes(unittest.TestCase):
     @async_test
     async def test_garbage_chunk_env_falls_back_to_default(self):
         """A non-integer knob value must not crash population."""
-        os.environ[ENV_KEY] = 'not-a-number'
+        os.environ[ENV_KEY] = "not-a-number"
         hashes = await StubDB(25).fs_block_hashes(0, 25)
         self.assertEqual(25, len(hashes))
 
@@ -163,9 +167,9 @@ class TestChunkedBlockHashes(unittest.TestCase):
 
     def test_small_counts_stay_silent(self):
         """Per-block extends must not spam progress lines like upstream."""
-        with self.assertNoLogs('test_merkle_chunk', level='INFO'):
+        with self.assertNoLogs("test_merkle_chunk", level="INFO"):
             asyncio.run(StubDB(25).fs_block_hashes(0, 25))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

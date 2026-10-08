@@ -29,9 +29,8 @@ class TestCoinDivisorSource(unittest.TestCase):
     def test_server_features_exposes_class_divisor(self):
         env = SimpleNamespace(report_services=[], coin=Verge)
         features = ElectrumX.server_features(env)
-        self.assertEqual(Verge.VALUE_PER_COIN,
-                         features['value_per_coin'])
+        self.assertEqual(Verge.VALUE_PER_COIN, features["value_per_coin"])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

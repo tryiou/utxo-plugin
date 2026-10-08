@@ -1,9 +1,10 @@
 import asyncio
 import os
+
 from aiorpcx import run_in_thread
 from electrumx.server.db import DB
-from server.compact_policy import CompactRestartRequested, parse_threshold
 
+from server.compact_policy import CompactRestartRequested, parse_threshold
 
 # Slice size for cooperative header hashing.  Upstream builds the header
 # Merkle cache by hashing every header in one synchronous loop
@@ -13,7 +14,8 @@ from server.compact_policy import CompactRestartRequested, parse_threshold
 # loop yield between slices keeps sessions servable throughout the
 # populate: worst scheduling block ~= CHUNK x per-header cost.
 MERKLE_CHUNK_HEADERS_DEFAULT = 100
-MERKLE_CHUNK_ENVVAR = 'MERKLE_CHUNK_HEADERS'
+MERKLE_CHUNK_ENVVAR = "MERKLE_CHUNK_HEADERS"
+MERKLE_VERBOSE_MIN_COUNT = 1000
 
 
 class Database(DB):
@@ -25,8 +27,10 @@ class Database(DB):
     @staticmethod
     def merkle_chunk_size():
         try:
-            return max(1, int(os.environ.get(MERKLE_CHUNK_ENVVAR,
-                                             MERKLE_CHUNK_HEADERS_DEFAULT)))
+            return max(
+                1,
+                int(os.environ.get(MERKLE_CHUNK_ENVVAR, MERKLE_CHUNK_HEADERS_DEFAULT)),
+            )
         except (TypeError, ValueError):
             return MERKLE_CHUNK_HEADERS_DEFAULT
 
@@ -44,15 +48,14 @@ class Database(DB):
         done = 0
         # Progress lines (~every 5%) only for long populates; per-block
         # extends and proof-adjacent calls stay as silent as upstream.
-        verbose = count >= 1000
+        verbose = count >= MERKLE_VERBOSE_MIN_COUNT
         mark = max(1, count // 20)
         for start in range(height, height + count, chunk):
             n = min(chunk, height + count - start)
             hashes.extend(await super().fs_block_hashes(start, n))
             done += n
-            if verbose and (done == count
-                            or done // mark != (done - n) // mark):
-                self.logger.info(f'hashed {done:,d}/{count:,d} headers')
+            if verbose and (done == count or done // mark != (done - n) // mark):
+                self.logger.info(f"hashed {done:,d}/{count:,d} headers")
             await asyncio.sleep(0)
         return hashes
 
@@ -76,13 +79,13 @@ class Database(DB):
             flush_count = self.history.flush_count
             if flush_count >= self.compact_threshold:
                 raise CompactRestartRequested(
-                    'flush_count {:,d} >= threshold {:,d}; exiting '
-                    'for compaction restart'.format(
-                        flush_count, self.compact_threshold))
+                    f"flush_count {flush_count:,d} >= threshold "
+                    f"{self.compact_threshold:,d}; exiting for compaction restart",
+                )
 
     async def raw_block(self, height):
         if height < 0:
-            raise self.DBError(f'{height:,d} not on disk')
+            raise self.DBError(f"{height:,d} not on disk")
 
         def get_block():
             try:
@@ -91,17 +94,3 @@ class Database(DB):
                 return None, None
 
         return await run_in_thread(get_block)
-
-    async def raw_blocks(self, last_height, count):
-        if last_height < 0 or count < 0:
-            raise self.DBError(f'{count:,d} blocks starting at '
-                               f'{last_height:,d} not on disk')
-
-        def get_blocks():
-            heights = range(last_height, last_height - count, -1)
-            try:
-                return [(height, bytes(self.read_raw_block(height)).hex()) for height in heights]
-            except FileNotFoundError:
-                return []
-
-        return await run_in_thread(get_blocks)
