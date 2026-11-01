@@ -1,10 +1,14 @@
 name: build docker
 
-# Every push, tag and pull request builds the image. Publishing is optional:
-# it only happens on a push to `main`, and only when the Docker Hub
-# credentials (`org_blocknetdximg_username` / `org_blocknetdximg_password`)
-# exist. Every other branch, tag or pull request just builds, so a fork runs
-# a full build and pushes nothing.
+# Every push, tag and pull request builds the image and runs the test suite.
+# A push to `main` or `dev` also publishes `:<branch>` when Docker Hub
+# credentials exist, plus `:latest` on main; every other ref and every pull
+# request only builds and tests. Without credentials (a fork) nothing is
+# published.
+#
+# A fork can publish to its own namespace by setting the repository variable
+# DOCKERHUB_IMAGE and the DOCKERHUB_USERNAME / DOCKERHUB_PASSWORD secrets;
+# the defaults target the upstream blocknetdx Docker Hub organisation.
 
 on:
   push:
@@ -15,18 +19,18 @@ permissions:
   contents: read
 
 # Superseded pull-request runs are cancelled; pushes queue instead so a
-# publish to main is never interrupted half-way.
+# publish is never interrupted half-way.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  IMAGE: blocknetdx/utxo-plugin
+  IMAGE: ${{ vars.DOCKERHUB_IMAGE || 'blocknetdx/utxo-plugin' }}
 
 jobs:
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@v5
@@ -47,13 +51,13 @@ jobs:
 
   build:
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       # Only the username decides whether publishing is possible, so only it
       # is job-wide; the token is scoped to the login step below. Secrets
       # cannot be referenced from `if:`, hence env plus a step output.
-      DOCKERHUB_USERNAME: ${{ secrets.org_blocknetdximg_username }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || secrets.org_blocknetdximg_username }}
     steps:
     - uses: actions/checkout@v5
       with:
@@ -76,33 +80,44 @@ jobs:
     - name: Build image
       run: docker build . --file Dockerfile --tag "${{ steps.meta.outputs.image }}"
 
+    - name: Test image
+      run: >-
+        docker run --rm --entrypoint sh "${{ steps.meta.outputs.image }}"
+        -c 'pip install --no-cache-dir -q "pytest==9.1.1" && python3 -m pytest -q'
+
     - name: Decide whether to publish
       id: publish
-      # Only a push to main publishes. `main` is this repo's default branch
-      # and the one the upstream workflow used to tag as `latest`.
+      # Only main and dev publish, and pull requests never do. A missing
+      # username means a fork without credentials, so the run is build-only.
       run: |
-        if [ -n "$DOCKERHUB_USERNAME" ] \
-           && [ "$GITHUB_REF" = "refs/heads/main" ] \
+        case "$GITHUB_REF" in
+          refs/heads/main|refs/heads/dev) publishable=true ;;
+          *) publishable=false ;;
+        esac
+        if [ "$publishable" = true ] && [ -n "$DOCKERHUB_USERNAME" ] \
            && [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
           echo "enabled=true" >> "$GITHUB_OUTPUT"
-          echo "Push to main with credentials: image will be published."
+          echo "Credentials present: image will be pushed to $IMAGE."
         else
           echo "enabled=false" >> "$GITHUB_OUTPUT"
           echo "Build only."
-          if [ "$GITHUB_REF" = "refs/heads/main" ] && [ -z "$DOCKERHUB_USERNAME" ]; then
-            echo "::warning::Push to main without Docker Hub credentials: image built but not published."
+          if [ "$publishable" = true ] && [ -z "$DOCKERHUB_USERNAME" ]; then
+            echo "::warning::$GITHUB_REF pushed without Docker Hub credentials: image built but not published."
           fi
         fi
 
     - name: Login to DockerHub
       if: steps.publish.outputs.enabled == 'true'
       env:
-        DOCKERHUB_PASSWORD: ${{ secrets.org_blocknetdximg_password }}
+        DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD || secrets.org_blocknetdximg_password }}
       run: echo "$DOCKERHUB_PASSWORD" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
 
     - name: Push image
       if: steps.publish.outputs.enabled == 'true'
+      run: docker push "${{ steps.meta.outputs.image }}"
+
+    - name: Push latest
+      if: steps.publish.outputs.enabled == 'true' && github.ref == 'refs/heads/main'
       run: |
-        docker push "${{ steps.meta.outputs.image }}"
         docker tag "${{ steps.meta.outputs.image }}" "$IMAGE:latest"
         docker push "$IMAGE:latest"
