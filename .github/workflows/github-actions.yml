@@ -1,14 +1,16 @@
 name: build docker
 
 # Every push, tag and pull request builds the image and runs the test suite.
-# A push to `main` or `dev` also publishes `:<branch>` when Docker Hub
+# A push to `main` or `dev` also publishes `:<branch>` to Docker Hub when its
 # credentials exist, plus `:latest` on main; every other ref and every pull
-# request only builds and tests. Without credentials (a fork) nothing is
-# published.
+# request only builds and tests. Without Docker Hub credentials (a fork) the
+# image is published to the GitHub Container Registry instead, as
+# ghcr.io/<owner>/<repo>:<ref>, using the workflow token.
 #
-# A fork can publish to its own namespace by setting the repository variable
-# DOCKERHUB_IMAGE and the DOCKERHUB_USERNAME / DOCKERHUB_PASSWORD secrets;
-# the defaults target the upstream blocknetdx Docker Hub organisation.
+# A fork can publish to its own Docker Hub namespace by setting the
+# repository variable DOCKERHUB_IMAGE and the DOCKERHUB_USERNAME /
+# DOCKERHUB_PASSWORD secrets; the defaults target the upstream blocknetdx
+# Docker Hub organisation.
 
 on:
   push:
@@ -53,6 +55,9 @@ jobs:
     needs: lint
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
     env:
       # Only the username decides whether publishing is possible, so only it
       # is job-wide; the token is scoped to the login step below. Secrets
@@ -74,6 +79,7 @@ jobs:
         tag="$(printf '%s' "$GITHUB_REF_NAME" | tr 'A-Z' 'a-z' \
           | sed -e 's#[^a-z0-9._-]#-#g' -e 's#^[^a-z0-9]*##' -e 's#[^a-z0-9]*$##')"
         tag="${tag:-push}"
+        echo "tag=$tag" >> "$GITHUB_OUTPUT"
         echo "image=$IMAGE:$tag" >> "$GITHUB_OUTPUT"
         echo "Building $IMAGE:$tag"
 
@@ -87,13 +93,19 @@ jobs:
 
     - name: Decide whether to publish
       id: publish
-      # Only main and dev publish, and pull requests never do. A missing
-      # username means a fork without credentials, so the run is build-only.
+      # Only main and dev publish to Docker Hub, and pull requests never do.
+      # A missing username means a fork without credentials, which publishes
+      # to GHCR instead.
       run: |
         case "$GITHUB_REF" in
           refs/heads/main|refs/heads/dev) publishable=true ;;
           *) publishable=false ;;
         esac
+        if [ -n "$DOCKERHUB_USERNAME" ]; then
+          echo "ghcr=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "ghcr=true" >> "$GITHUB_OUTPUT"
+        fi
         if [ "$publishable" = true ] && [ -n "$DOCKERHUB_USERNAME" ] \
            && [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
           echo "enabled=true" >> "$GITHUB_OUTPUT"
@@ -102,7 +114,7 @@ jobs:
           echo "enabled=false" >> "$GITHUB_OUTPUT"
           echo "Build only."
           if [ "$publishable" = true ] && [ -z "$DOCKERHUB_USERNAME" ]; then
-            echo "::warning::$GITHUB_REF pushed without Docker Hub credentials: image built but not published."
+            echo "::warning::$GITHUB_REF pushed without Docker Hub credentials: publishing to GHCR instead."
           fi
         fi
 
@@ -121,3 +133,29 @@ jobs:
       run: |
         docker tag "${{ steps.meta.outputs.image }}" "$IMAGE:latest"
         docker push "$IMAGE:latest"
+
+    # Fallback registry for a fork, where no Docker Hub credentials exist.
+    # Restricted to GitHub-hosted runners so an emulated or self-hosted run
+    # never pushes a package.
+    - name: Login to GHCR
+      if: >-
+        steps.publish.outputs.ghcr == 'true'
+        && github.event_name != 'pull_request'
+        && runner.environment == 'github-hosted'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+    - name: Push image to GHCR
+      if: >-
+        steps.publish.outputs.ghcr == 'true'
+        && github.event_name != 'pull_request'
+        && runner.environment == 'github-hosted'
+      run: |
+        ghcr="ghcr.io/${GITHUB_REPOSITORY,,}"
+        docker tag "${{ steps.meta.outputs.image }}" "$ghcr:${{ steps.meta.outputs.tag }}"
+        docker push "$ghcr:${{ steps.meta.outputs.tag }}"
+        if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+          docker tag "${{ steps.meta.outputs.image }}" "$ghcr:latest"
+          docker push "$ghcr:latest"
+        fi
